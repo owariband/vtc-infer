@@ -1,0 +1,18 @@
+name: noisy-neighbor
+duration_seconds: 120
+seed: 20260912
+model: Qwen/Qwen2.5-1.5B-Instruct
+endpoint: http://127.0.0.1:8000/v1/chat/completions
+request_timeout_seconds: 300
+max_in_flight: 512
+tenants:
+  - tenant_id: tenant-a
+    request_rate: 8.0
+    prompt_tokens: 512
+    max_output_tokens: 256
+    system_prompt: Answer directly and continue until the requested token budget is used.
+  - tenant_id: tenant-b
+    request_rate: 1.0
+    prompt_tokens: 128
+    max_output_tokens: 32
+    system_prompt: Answer briefly.
