@@ -420,7 +420,7 @@ Day 1 先验收原生 FCFS 的数据闭环，不修改 scheduler。当前已提�
 Poisson 到达序列在客户端分别生成；某个请求是否完成不会推迟后续请求的计划到达时间。
 `max_in_flight` 只是防止客户端连接无限增长，不是服务端并发配置。
 
-Day 1 的详细运行和验收步骤见第 6 节。退出条件是：
+Day 1 按下面的 5.2.1～5.2.8 依次执行。退出条件是：
 
 - workload 完成且无请求静默丢失；
 - 请求级时间戳、状态和 token usage 能被解析；
@@ -432,30 +432,7 @@ Day 1 的详细运行和验收步骤见第 6 节。退出条件是：
 只有同时满足“服务端排队”和“客户端没有明显发压滞后”，实验才能用于后续 FCFS/VTC
 对照。如果客户端自身已经排队，测到的延迟不能归因于 vLLM scheduler。
 
-### 5.3 Day 2：VTC 调度
-
-- 实现每租户 virtual counter、租户 FIFO、counter lift 和确定性 tie-break；
-- admission 按输入 token 计费，decode 按实际输出 token 增量计费；
-- 为计费、租户选择、重新活跃、取消和异常路径增加单元测试；
-- 使用完全相同的 workload 对比 FCFS 与 VTC；
-- 检查死锁、丢请求、counter 回退、吞吐异常和 scheduler CPU 开销。
-
-验收：饱和负载下高频租户不能长期挤压持续活跃的低频租户。
-
-### 5.4 Day 3：缓存实验与交付
-
-- 增加共享长前缀和随机前缀两组 workload；
-- 实现并明确标记实验性的 VTC-Miss 成本模型；
-- FCFS、VTC、VTC-Miss 各重复至少 3 次；
-- 自动生成 Jain index、service gap、P50/P95/P99 TTFT、TPOT、吞吐和 cache hit 图表；
-- 编写 `scripts/run_server.sh`、`scripts/run_experiment.sh` 和 `scripts/render_report.sh`；
-- 完成 README、已知限制、复现命令和 3～5 分钟演示。
-
-验收：从干净 checkout 按 README 能重新运行至少一组小规模实验。
-
-## 6. 阶段一如何运行和保存结果
-
-### 6.1 同步代码并安装负载生成器
+#### 5.2.1 同步代码并安装负载生成器
 
 以下命令在 Ubuntu GPU 主机的 TinyInfer checkout 中执行。正式实验必须使用已提交的
 commit；不要一边修改 workload 一边复用同一个实验编号。
@@ -476,7 +453,7 @@ pytest -q
 期望 `git status --short` 没有输出，测试全部通过。`.venv` 仅包含客户端负载和分析依赖，
 不在宿主机安装 vLLM、PyTorch 或 CUDA。
 
-### 6.2 启动并检查 FCFS 服务
+#### 5.2.2 启动并检查 FCFS 服务
 
 如果 Day 0 的容器已删除，使用第 5.1 节步骤 7 的固定命令重新启动。不要在不同重复实验
 之间更改 `max_model_len`、`max_num_seqs`、prefix caching 或 GPU memory 设置。
@@ -518,7 +495,7 @@ curl --fail --silent http://127.0.0.1:8000/metrics \
 空闲时指标值应为 `0`。如果指标不存在，先检查 vLLM 版本和 `/metrics` 输出，不要用
 GPU utilization 猜测是否排队。
 
-### 6.3 检查并理解 workload
+#### 5.2.3 检查并理解 workload
 
 正式运行前保存当前配置：
 
@@ -537,7 +514,7 @@ prompt 的目标长度；报告以服务端 usage 返回的实际 token 数为�
 3. 每次参数变化都创建新 commit 或保存独立 workload 文件，并使用新的实验编号；
 4. 不同时调整请求率、输出长度和 `max_num_seqs`，否则无法解释是哪项变化造成差异。
 
-### 6.4 运行一次 FCFS workload
+#### 5.2.4 运行一次 FCFS workload
 
 明确指定实验编号，避免同一分钟运行时目录名冲突。以下示例中的编号应按实际重复次数修改：
 
@@ -568,7 +545,7 @@ results/runs/<experiment_id>/
 目录已存在时运行器会直接失败，不会覆盖旧实验。策略、参数、代码或重复次数变化后必须使用
 新的 `experiment_id`。
 
-### 6.5 同时采样服务端 waiting queue
+#### 5.2.5 同时采样服务端 waiting queue
 
 `requests.jsonl` 记录客户端观察到的请求时序；是否真正饱和必须由服务端指标证明。在另一个
 终端运行以下采样。采样覆盖 120 秒发压以及排队请求排空所需的额外时间：
@@ -595,7 +572,7 @@ awk 'NR % 2 == 1 {timestamp=$0; next} {print timestamp "\t" $0}' \
 如果 `curl` 失败，原始文件会出现奇数行，不能继续使用上述转换结果。先检查服务日志和
 采样完整性，重新运行实验，不要手工补零。
 
-### 6.6 生成并查看分析结果
+#### 5.2.6 生成并查看分析结果
 
 ```bash
 python -m analysis.report \
@@ -617,7 +594,7 @@ Jain index 不能单独作为 Day 1 的通过条件。当前两个租户的 offe
 不同，累计 service 本来就不会相同；而且让所有租户一起变慢也可能得到更好看的公平性。
 它必须与 waiting queue、每租户尾延迟、吞吐和失败数一起解释。
 
-### 6.7 单次运行的数据完整性验收
+#### 5.2.7 单次运行的数据完整性验收
 
 先检查状态、usage 和客户端发压滞后：
 
@@ -657,7 +634,7 @@ grep -Ei 'error|exception|traceback|out of memory|killed' \
   "results/runs/${TINYINFER_EXPERIMENT_ID}/server.log" || true
 ```
 
-### 6.8 重复性和 noisy-neighbor 验收
+#### 5.2.8 重复性和 noisy-neighbor 验收
 
 保持 commit、模型、服务启动参数、workload 和 seed 不变，依次运行 `r1`、`r2`、`r3`。
 每次运行前等待 `vllm:num_requests_waiting` 回到 0，并留出短暂冷却时间；不要并行运行三组。
@@ -665,7 +642,7 @@ grep -Ei 'error|exception|traceback|out of memory|killed' \
 三次结果按以下规则验收：
 
 - 三份 JSONL 的请求总数、各租户请求数、request ID 和 `scheduled_time` 完全一致；
-- 三次均通过第 6.7 节的数据完整性与服务端排队门槛；
+- 三次均通过第 5.2.7 节的数据完整性与服务端排队门槛；
 - 分别比较 `tenant-b` 的 P95/P99 TTFT 和 aggregate throughput，报告三次原始值，不只挑
   最好的一次；
 - 若某次出现 OOM、HTTP 错误、客户端发压滞后或服务重启，该次标记为无效并说明原因，
@@ -679,7 +656,28 @@ workload，并比较单租户与双租户的 P95/P99 TTFT。没有 control 时�
 Day 1 通过后再进入 VTC 开发。后续 FCFS 与 VTC 必须复用同一 workload、模型、服务参数
 和分析脚本；唯一允许变化的是 scheduler policy 及其实现所必需且已记录的启动参数。
 
-## 7. 阶段一是否需要发布镜像
+### 5.3 Day 2：VTC 调度
+
+- 实现每租户 virtual counter、租户 FIFO、counter lift 和确定性 tie-break；
+- admission 按输入 token 计费，decode 按实际输出 token 增量计费；
+- 为计费、租户选择、重新活跃、取消和异常路径增加单元测试；
+- 使用完全相同的 workload 对比 FCFS 与 VTC；
+- 检查死锁、丢请求、counter 回退、吞吐异常和 scheduler CPU 开销。
+
+验收：饱和负载下高频租户不能长期挤压持续活跃的低频租户。
+
+### 5.4 Day 3：缓存实验与交付
+
+- 增加共享长前缀和随机前缀两组 workload；
+- 实现并明确标记实验性的 VTC-Miss 成本模型；
+- FCFS、VTC、VTC-Miss 各重复至少 3 次；
+- 自动生成 Jain index、service gap、P50/P95/P99 TTFT、TPOT、吞吐和 cache hit 图表；
+- 编写 `scripts/run_server.sh`、`scripts/run_experiment.sh` 和 `scripts/render_report.sh`；
+- 完成 README、已知限制、复现命令和 3～5 分钟演示。
+
+验收：从干净 checkout 按 README 能重新运行至少一组小规模实验。
+
+## 6. 阶段一是否需要发布镜像
 
 不强制。阶段一的首要目标是验证调度算法和实验可信度，可以先通过官方 vLLM 容器挂载本仓库代码进行开发：
 
@@ -692,9 +690,9 @@ Day 1 通过后再进入 VTC 开发。后续 FCFS 与 VTC 必须复用同一 wor
 
 阶段一结束时至少需要一个可复现的启动脚本。建议同时构建一个候选镜像做 smoke test，但正式的不可变镜像是阶段二的进入门槛。
 
-## 8. 镜像打包方案
+## 7. 镜像打包方案
 
-### 8.1 推荐路径：scheduler 包可独立加载
+### 7.1 推荐路径：scheduler 包可独立加载
 
 在 `docker/Dockerfile` 中：
 
@@ -706,7 +704,7 @@ Day 1 通过后再进入 VTC 开发。后续 FCFS 与 VTC 必须复用同一 wor
 
 这种方式构建快、变更面小，也容易证明 TinyInfer 与上游 vLLM 的边界。
 
-### 8.2 备选路径：必须修改 vLLM 内部
+### 7.2 备选路径：必须修改 vLLM 内部
 
 如果 `scheduler_cls` 无法满足实现要求：
 
@@ -718,7 +716,7 @@ Day 1 通过后再进入 VTC 开发。后续 FCFS 与 VTC 必须复用同一 wor
 
 不要在 Dockerfile 中 clone 浮动的 `main`，也不要下载未经校验的临时源码包。
 
-## 9. 构建、验证和发布镜像
+## 8. 构建、验证和发布镜像
 
 建议在租用的 x86 GPU 云主机上完成最终镜像构建、GPU smoke test 和推送。Mac 本地可以做普通 Python 测试，但不能替代 Linux + NVIDIA 环境验证。
 
@@ -772,7 +770,7 @@ docker buildx imagetools inspect ${TINYINFER_IMAGE}
 
 把完整的 `image@sha256:...` 写入发布记录和阶段二 Helm values。部署时优先使用 digest，而不是可被覆盖的 tag。
 
-## 10. 发布门禁与回滚
+## 9. 发布门禁与回滚
 
 创建 Git tag 前必须满足：
 
@@ -792,7 +790,7 @@ git push origin v0.1.0
 
 容器镜像不可原地覆盖。回滚就是把启动脚本或阶段二 Helm values 恢复到上一个已验证的 `image@sha256:...`。
 
-## 11. 阶段一交付清单
+## 10. 阶段一交付清单
 
 - [ ] TinyInfer Git 远端和首个基线提交；
 - [ ] 固定版本的 vLLM、模型 revision 和依赖锁；
