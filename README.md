@@ -13,4 +13,36 @@ VTC-Infer 是一个基于 vLLM V1 的多租户公平调度实验项目。阶段�
 - `results/sample/`：可提交的小型示例数据
 - `results/runs/`：完整实验结果，默认不提交 Git
 
-当前仓库仅保留阶段一目录骨架，代码和配置将在开发过程中按需创建。
+当前已实现阶段一的 FCFS 基线数据闭环；VTC 调度器和 prefix-reuse 实验尚待实现。
+
+## 阶段一：运行 FCFS 基线
+
+在本地或 GPU 主机创建轻量 Python 环境：
+
+```bash
+python3 -m venv .venv
+. .venv/bin/activate
+python -m pip install -e '.[dev]'
+pytest
+```
+
+确认 vLLM 服务已经按 `docs/environment-lock.md` 启动后运行：
+
+```bash
+python -m scripts.run_experiment \
+  --workload benchmark/workloads/noisy_neighbor.yaml \
+  --policy fcfs \
+  --service-parameter max_model_len=4096 \
+  --service-parameter max_num_seqs=16 \
+  --service-parameter prefix_caching=true
+```
+
+命令会在 `results/runs/<experiment-id>/` 中保存 `manifest.json`、
+`requests.jsonl` 和 `run_summary.json`。随后可从原始请求记录重新生成指标：
+
+```bash
+python -m analysis.report results/runs/<experiment-id>/requests.jsonl
+```
+
+默认 workload 是初始压力参数，不是固定结论。如果服务没有形成持续排队，优先逐步提高
+`tenant-a.request_rate` 或降低 vLLM 的 `max_num_seqs`，并把最终配置随实验结果保留。

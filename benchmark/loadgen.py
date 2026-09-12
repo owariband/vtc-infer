@@ -110,7 +110,6 @@ async def _send_request(
                 },
             ) as response:
                 response.raise_for_status()
-                output_tokens_seen = 0
                 async for line in response.aiter_lines():
                     for payload in _sse_payloads((line,)):
                         choices = payload.get("choices") or []
@@ -119,15 +118,12 @@ async def _send_request(
                             if content:
                                 if record.first_token_time is None:
                                     record.first_token_time = clock() - start_time
-                                output_tokens_seen += 1
                         usage = payload.get("usage")
                         if usage:
                             record.prompt_tokens = usage.get("prompt_tokens")
                             record.output_tokens = usage.get("completion_tokens")
                             details = usage.get("prompt_tokens_details") or {}
                             record.cached_tokens = details.get("cached_tokens")
-                if record.output_tokens is None:
-                    record.output_tokens = output_tokens_seen
                 record.status = "ok"
         except (httpx.HTTPError, json.JSONDecodeError) as error:
             record.status = "error"
