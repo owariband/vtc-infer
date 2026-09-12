@@ -1,10 +1,10 @@
-# TinyInfer
+# VTC-Infer
 
-TinyInfer 是一个基于 vLLM V1 的多租户公平调度实验项目。阶段一将在单张 GPU 上对比 FCFS、VTC 和实验性的 VTC-Miss，并记录公平性、延迟与吞吐结果。
+VTC-Infer 是一个基于 vLLM V1 的多租户公平调度实验项目。阶段一将在单张 GPU 上对比 FCFS、VTC 和实验性的 VTC-Miss，并记录公平性、延迟与吞吐结果。
 
 ## 目录
 
-- `tinyinfer/`：调度算法与 vLLM 适配代码
+- `vtc_infer/`：调度算法与 vLLM 适配代码
 - `benchmark/`：负载生成器与实验工作负载
 - `analysis/`：指标计算、绘图与报告生成
 - `tests/`：单元测试和冒烟测试
