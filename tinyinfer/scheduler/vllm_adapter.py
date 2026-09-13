@@ -12,6 +12,14 @@ from vllm.v1.request import Request
 from .vtc import VTCState
 
 
+class CustomFCFSScheduler(Scheduler):
+    """Unmodified vLLM FCFS scheduler loaded through ``scheduler_cls``.
+
+    This control isolates the overhead of vLLM's custom synchronous scheduler
+    path from the additional queueing and accounting performed by VTC.
+    """
+
+
 class VTCRequestQueue(RequestQueue):
     def __init__(self, state: VTCState) -> None:
         self.state = state

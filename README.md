@@ -16,7 +16,9 @@ VTC-Infer 是一个基于 vLLM V1 的多租户公平调度实验项目。阶段�
 当前已实现阶段一的 FCFS 基线数据闭环和原始 VTC 调度器；GPU 对照实验与
 prefix-reuse 实验尚待完成。VTC 使用
 `--scheduler-cls tinyinfer.scheduler.vllm_adapter.VTCScheduler` 加载，默认实验权重为
-`TINYINFER_VTC_WP=1`、`TINYINFER_VTC_WQ=2`。
+`TINYINFER_VTC_WP=1`、`TINYINFER_VTC_WQ=2`。用于隔离自定义同步 scheduler 路径开销的
+FCFS 对照使用 `--scheduler-cls tinyinfer.scheduler.vllm_adapter.CustomFCFSScheduler`；
+该类不修改 vLLM 原生 FCFS 队列和调度逻辑。
 
 ## 阶段一：运行 FCFS 基线
 
