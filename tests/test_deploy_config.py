@@ -51,7 +51,15 @@ def test_phase_two_values_pin_single_gpu_and_disable_out_of_scope_features() -> 
         assert model["keda"]["enabled"] is False
         assert values["routerSpec"]["routingLogic"] == "roundrobin"
         assert values["routerSpec"]["autoscaling"]["enabled"] is False
+        assert values["routerSpec"]["startupProbe"]["failureThreshold"] >= 12
         assert values["prometheus-adapter"]["enabled"] is False
+
+        monitoring = values["kube-prometheus-stack"]
+        assert monitoring["enabled"] is True
+        assert monitoring["defaultRules"]["create"] is False
+        assert monitoring["alertmanager"]["enabled"] is False
+        assert monitoring["kubeStateMetrics"]["enabled"] is False
+        assert monitoring["nodeExporter"]["enabled"] is False
 
 
 def test_deployable_images_must_be_injected_as_immutable_references() -> None:

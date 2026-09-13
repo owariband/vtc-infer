@@ -1183,6 +1183,19 @@ kubectl version --client
 helm version
 ```
 
+`gpu1` 从阶段一切换到阶段二时，必须停止占用唯一 GPU 的裸 Docker 服务，并确认没有宿主机
+compute process；只停止、不删除容器，阶段一环境仍可人工恢复：
+
+```bash
+sudo docker ps --no-trunc \
+  --format 'table {{.ID}}\t{{.Names}}\t{{.Image}}\t{{.Status}}'
+sudo docker stop tinyinfer-vllm-custom-fcfs
+nvidia-smi --query-compute-apps=pid,process_name,used_memory --format=csv,noheader
+```
+
+最后一条命令必须没有输出。若仍有进程，先用 `pstree -aps <pid>` 和 `ps -fp <pid>` 查明
+所有者，不得通过降低 `gpuMemoryUtilization` 掩盖其他服务占用 GPU。
+
 阶段二默认使用固定版本的单节点 k3s。若机器已有可复用集群，则保留现有发行版，但必须把
 版本与安装方式写入 `chart.lock.yaml`，不得在同一主机再安装第二套 Kubernetes。新建 k3s
 时锁定 `INSTALL_K3S_VERSION`，不使用未记录版本：
@@ -1346,6 +1359,12 @@ sudo docker run --rm --gpus all --entrypoint /bin/sh <image:tag> -c '
 如果 `kubectl get runtimeclass` 没有 `nvidia`，则把 `runtimeClassName` 显式设为空字符串。不得
 设置 `vllmConfig.v0: "1"`，因为 Chart 会据此注入 `VLLM_USE_V1=0`。
 
+Router 镜像首次启动时 Python import 和 Kubernetes discovery 初始化在 `gpu1` 上超过了 Chart
+默认约 15 秒的 startup probe 容错窗口。因此三个 values 文件统一覆盖
+`routerSpec.startupProbe` 为 `initialDelaySeconds=5`、`periodSeconds=5`、
+`failureThreshold=12`，提供约 60 秒窗口。此调整不改变 readiness 语义；Router 只有
+`/health` 成功后才加入 Service endpoint。
+
 注意：官方 Chart 当前按 `repository:tag` 拼接镜像，digest 应放进 `tag`，形成合法的
 `repository:tag@sha256:digest`。每次选版都通过实际模板确认，不能假设未来 Chart 保持这一
 实现。
@@ -1420,6 +1439,56 @@ helm -n vtc-infer status vtc-infer
 helm -n vtc-infer get values vtc-infer --all
 helm -n vtc-infer get manifest vtc-infer
 ```
+
+#### 14.3.1 `gpu1` 首次安装失败与修复记录（2026-09-14）
+
+第一次实际安装使用 `scripts/deploy_phase2.sh fcfs`、`--atomic --timeout 30m`。故障现场通过
+以下命令保留，后续遇到 Pod 重启时也按相同顺序排查：
+
+```bash
+export KUBECONFIG=/workspace/.kube/vtc-infer-config
+helm -n vtc-infer status vtc-infer
+kubectl -n vtc-infer get pods -o wide
+kubectl -n vtc-infer get events --sort-by=.lastTimestamp
+kubectl -n vtc-infer logs -l app.kubernetes.io/component=serving-engine \
+  --all-containers --previous --tail=400
+kubectl -n vtc-infer logs -l app.kubernetes.io/component=router \
+  --all-containers --previous --tail=400
+kubectl -n vtc-infer get deploy \
+  vtc-infer-qwen25-15b-deployment-vllm vtc-infer-deployment-router -o yaml
+```
+
+Engine 日志的根因是 `Free memory ... 1.21/23.52 GiB`，而期望值为 21.17 GiB。宿主机
+`nvidia-smi` 和 `pstree` 定位到阶段一容器 `tinyinfer-vllm-custom-fcfs` 占用 22444 MiB；按
+13.3 节停止它后，Kubernetes Engine 成功加载同一模型 revision、完成 CUDA graph warmup，
+并以 `CustomAsyncFCFSScheduler` 开始监听 8000 端口。冷 PVC 首次访问 Hugging Face 曾发生两次
+约 130 秒超时，但随后权重下载成功；startup probe 的 15 分钟窗口足以覆盖该过程。
+
+Router 容器日志显示应用本身能启动并返回 `/health=200`，但 Chart 默认 startup probe 窗口
+过短，先前已被 kubelet 多次终止。values 已按 14.2 节扩窗。
+
+同一次安装中还有与核心服务无关的监控镜像故障：
+`registry.k8s.io/kube-state-metrics:v2.18.0` 解析到 Google Artifact Registry 后连接超时，
+node-exporter 拉取也长期停留在 `ContainerCreating`。阶段二只要求采集 Engine、Router 和
+VTC-Infer 指标，因此固定关闭 kube-state-metrics、node-exporter、Alertmanager 和默认
+Kubernetes 规则，只保留 Prometheus Operator、Prometheus、Grafana、自定义 ServiceMonitor
+和 `deploy/monitoring/prometheus-rules.yaml`。对应 values 为：
+
+```yaml
+kube-prometheus-stack:
+  enabled: true
+  defaultRules:
+    create: false
+  alertmanager:
+    enabled: false
+  kubeStateMetrics:
+    enabled: false
+  nodeExporter:
+    enabled: false
+```
+
+这不是通用生产监控配置；若要监控节点和 Kubernetes 对象，应为目标环境建立可达的镜像
+仓库后重新启用，不得声称本阶段已经覆盖这些指标。
 
 `<engine-deployment>` 和 `<router-deployment>` 从实际渲染结果取得，不在脚本中按模糊名称
 猜测。检查 engine Pod 的 `imageID`、args、env、GPU limit 和 probe，确认运行状态与 values
@@ -1516,7 +1585,8 @@ Dashboard。不得根据其他 vLLM 版本的名字猜测指标。阶段二必�
 - prefix cache hit 或 KV cache usage；
 - 请求成功/失败或 finished requests；
 - Router QPS、后端健康与请求延迟；
-- 当前部署策略、Pod Ready 状态与重启次数。
+- 当前部署策略、Pod Ready 状态与重启次数（本阶段由 Helm values、`kubectl` 状态和事件取证，
+  不启用 kube-state-metrics）。
 
 租户级 TTFT 和公平性继续从请求级 JSONL 计算，不把 `tenant_id`、`request_id`、
 `experiment_id` 放入 Prometheus label。

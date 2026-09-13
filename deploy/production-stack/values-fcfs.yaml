@@ -93,6 +93,13 @@ routerSpec:
       memory: 1Gi
     limits:
       memory: 1Gi
+  startupProbe:
+    initialDelaySeconds: 5
+    periodSeconds: 5
+    failureThreshold: 12
+    httpGet:
+      path: /health
+      port: router-port
 
 cacheserverSpec:
   enabled: false
@@ -102,5 +109,13 @@ grafanaDashboards:
   enabled: true
 kube-prometheus-stack:
   enabled: true
+  defaultRules:
+    create: false
+  alertmanager:
+    enabled: false
+  kubeStateMetrics:
+    enabled: false
+  nodeExporter:
+    enabled: false
 prometheus-adapter:
   enabled: false
