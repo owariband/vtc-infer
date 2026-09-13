@@ -9,3 +9,4 @@ build/
 results/runs/*
 results/remote/*
 docs/*
+AGENTS.md

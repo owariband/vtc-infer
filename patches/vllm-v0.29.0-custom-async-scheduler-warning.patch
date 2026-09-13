@@ -1,0 +1,35 @@
+diff --git a/vllm/config/scheduler.py b/vllm/config/scheduler.py
+--- a/vllm/config/scheduler.py
++++ b/vllm/config/scheduler.py
+@@ -211,9 +211,21 @@ class SchedulerConfig:
+-        # The first half of this warning can be removed once the Scheduler interface is
+-        # finalized and we can maintain support for scheduler classes that implement it
++        if isinstance(self.scheduler_cls, str):
++            scheduler_cls = resolve_obj_by_qualname(self.scheduler_cls)
++        else:
++            scheduler_cls = self.scheduler_cls
++
++        # Keep the compatibility warning for all custom schedulers, but only report
++        # async degradation when the resolved class actually uses the synchronous base.
++        from vllm.v1.core.sched.async_scheduler import AsyncScheduler
++
++        degradation = (
++            " If you have subclassed Scheduler instead of AsyncScheduler, you will "
++            "see degraded performance due to async scheduling being disabled."
++            if not issubclass(scheduler_cls, AsyncScheduler)
++            else ""
++        )
+         logger.warning_once(
+             "Using custom scheduler class %s. This scheduler interface is not public "
+-            "and compatibility may not be maintained. If you have subclassed Scheduler "
+-            "instead of AsyncScheduler, you will see degraded performance due to async "
+-            "scheduling being disabled.",
++            "and compatibility may not be maintained.%s",
+             self.scheduler_cls,  # type: ignore[arg-type]
++            degradation,
+         )
+@@ -220,3 +232,1 @@ class SchedulerConfig:
+-        if not isinstance(self.scheduler_cls, str):
+-            return cast(type["SchedulerInterface"], self.scheduler_cls)
+-        return resolve_obj_by_qualname(self.scheduler_cls)
++        return cast(type["SchedulerInterface"], scheduler_cls)

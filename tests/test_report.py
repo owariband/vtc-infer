@@ -39,3 +39,38 @@ def test_summarize_groups_tenant_ttft_and_throughput() -> None:
     assert summary["tenants"]["b"]["ttft_seconds"]["p95"] == 2.0
     assert summary["output_throughput_tokens_per_second"] == pytest.approx(5.0)
     assert summary["jain_service_index"] == 1.0
+
+
+def test_summarize_reports_dispatch_lag_and_data_quality() -> None:
+    summary = summarize(
+        [
+            {
+                "tenant_id": "a",
+                "status": "ok",
+                "scheduled_time": 0.0,
+                "arrival_time": 0.1,
+                "first_token_time": 0.2,
+                "end_time": 0.3,
+                "prompt_tokens": 10,
+                "output_tokens": 2,
+            },
+            {
+                "tenant_id": "b",
+                "status": "error",
+                "scheduled_time": 1.0,
+                "arrival_time": 1.2,
+                "first_token_time": None,
+                "end_time": 1.1,
+                "prompt_tokens": 10,
+                "output_tokens": None,
+            },
+        ]
+    )
+
+    assert summary["dispatch_lag_seconds"]["p95"] == pytest.approx(0.195)
+    assert summary["data_quality"] == {
+        "failed_requests": 1,
+        "missing_first_token_time": 0,
+        "missing_output_usage": 0,
+        "invalid_timestamp_order": 1,
+    }

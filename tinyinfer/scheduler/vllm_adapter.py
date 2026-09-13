@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from collections.abc import Iterable, Iterator
 
+from vllm.v1.core.sched.async_scheduler import AsyncScheduler
 from vllm.v1.core.sched.request_queue import RequestQueue
 from vllm.v1.core.sched.scheduler import Scheduler
 from vllm.v1.request import Request
@@ -18,6 +19,10 @@ class CustomFCFSScheduler(Scheduler):
     This control isolates the overhead of vLLM's custom synchronous scheduler
     path from the additional queueing and accounting performed by VTC.
     """
+
+
+class CustomAsyncFCFSScheduler(AsyncScheduler):
+    """Unmodified async FCFS control loaded through ``scheduler_cls``."""
 
 
 class VTCRequestQueue(RequestQueue):
@@ -68,8 +73,8 @@ class VTCRequestQueue(RequestQueue):
             yield request
 
 
-class VTCScheduler(Scheduler):
-    """vLLM Scheduler with tenant-fair ordering of waiting requests."""
+class VTCScheduler(AsyncScheduler):
+    """Async vLLM scheduler with tenant-fair admission ordering."""
 
     DEFAULT_TENANT_ID = "__default__"
 
@@ -87,6 +92,7 @@ class VTCScheduler(Scheduler):
         )
         self.waiting = VTCRequestQueue(self.vtc)
         self.skipped_waiting = VTCRequestQueue(self.vtc)
+        self._vtc_batch_reservations: dict[int, dict[str, int]] = {}
 
     @staticmethod
     def _tenant_id(request: Request) -> str:
@@ -114,33 +120,43 @@ class VTCScheduler(Scheduler):
             )
         super().add_request(request)
 
-    def update_from_output(self, scheduler_output, model_runner_output):
-        before = {
-            request_id: (request.num_output_tokens, self.vtc.tenant_for(request_id))
+    def _update_after_schedule(self, scheduler_output) -> None:
+        placeholders_before = {
+            request_id: request.num_output_placeholders
             for request_id in scheduler_output.num_scheduled_tokens
             if (request := self.requests.get(request_id)) is not None
         }
-        outputs = super().update_from_output(scheduler_output, model_runner_output)
-        completed: set[str] = set()
-        for request_id, (previous, tenant_id) in before.items():
+        super()._update_after_schedule(scheduler_output)
+
+        reservations: dict[str, int] = {}
+        for request_id, previous in placeholders_before.items():
             request = self.requests.get(request_id)
-            if request is not None:
-                produced = request.num_output_tokens - previous
-            else:
-                produced = sum(
-                    len(output.new_token_ids)
-                    for client_outputs in outputs.values()
-                    for output in client_outputs.outputs
-                    if output.request_id == request_id
+            if request is None:
+                continue
+            reserved_tokens = request.num_output_placeholders - previous
+            if reserved_tokens > 0:
+                reservations[request_id] = self.vtc.reserve_output(
+                    request_id, reserved_tokens
                 )
-            if produced > 0:
-                self.vtc.charge_tenant(tenant_id, produced)
-            if any(
-                output.request_id == request_id and output.finish_reason is not None
-                for client_outputs in outputs.values()
-                for output in client_outputs.outputs
-            ):
-                completed.add(request_id)
+        if reservations:
+            self._vtc_batch_reservations[id(scheduler_output)] = reservations
+
+    def update_from_output(self, scheduler_output, model_runner_output):
+        reservations = self._vtc_batch_reservations.pop(id(scheduler_output), {})
+        outputs = super().update_from_output(scheduler_output, model_runner_output)
+        accepted: dict[str, int] = {}
+        completed: set[str] = set()
+        for client_outputs in outputs.values():
+            for output in client_outputs.outputs:
+                accepted[output.request_id] = accepted.get(output.request_id, 0) + len(
+                    output.new_token_ids
+                )
+                if output.finish_reason is not None:
+                    completed.add(output.request_id)
+        for request_id, reservation_id in reservations.items():
+            self.vtc.settle_output(
+                reservation_id, accepted_tokens=accepted.get(request_id, 0)
+            )
         for request_id in completed:
             self.vtc.remove(request_id)
         return outputs

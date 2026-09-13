@@ -35,6 +35,24 @@ def jain_index(values: Sequence[float]) -> float | None:
 
 def summarize(records: Iterable[dict[str, Any]]) -> dict[str, Any]:
     records = list(records)
+    successful_records = [record for record in records if record["status"] == "ok"]
+    dispatch_lag = [
+        record["arrival_time"] - record["scheduled_time"]
+        for record in records
+        if record.get("arrival_time") is not None
+        and record.get("scheduled_time") is not None
+    ]
+
+    def timestamps_are_ordered(record: dict[str, Any]) -> bool:
+        timestamps = [
+            record.get("scheduled_time"),
+            record.get("arrival_time"),
+            record.get("first_token_time"),
+            record.get("end_time"),
+        ]
+        present = [timestamp for timestamp in timestamps if timestamp is not None]
+        return present == sorted(present)
+
     by_tenant: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for record in records:
         by_tenant[record["tenant_id"]].append(record)
@@ -82,6 +100,24 @@ def summarize(records: Iterable[dict[str, Any]]) -> dict[str, Any]:
         ),
         "service_gap_tokens": max(services) - min(services) if services else None,
         "jain_service_index": jain_index(services),
+        "dispatch_lag_seconds": {
+            "p50": percentile(dispatch_lag, 0.50),
+            "p95": percentile(dispatch_lag, 0.95),
+            "p99": percentile(dispatch_lag, 0.99),
+        },
+        "data_quality": {
+            "failed_requests": len(records) - len(successful_records),
+            "missing_first_token_time": sum(
+                record.get("first_token_time") is None
+                for record in successful_records
+            ),
+            "missing_output_usage": sum(
+                record.get("output_tokens") is None for record in successful_records
+            ),
+            "invalid_timestamp_order": sum(
+                not timestamps_are_ordered(record) for record in records
+            ),
+        },
         "tenants": tenants,
     }
 

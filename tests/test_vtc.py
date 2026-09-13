@@ -11,6 +11,89 @@ def test_admission_and_decode_charge_use_configured_weights():
     assert state.counters == {"a": 16}
 
 
+def test_output_reservation_is_observable_until_settled():
+    state = VTCState(wp=1, wq=2)
+    state.enqueue("a1", "a", input_tokens=10)
+    state.admit("a1")
+
+    reservation = state.reserve_output("a1", 2)
+
+    assert state.counters == {"a": 10}
+    assert state.pending_service == {"a": 4}
+    assert state.effective_counters == {"a": 14}
+
+    assert state.settle_output(reservation, accepted_tokens=2)
+    assert state.counters == {"a": 14}
+    assert state.pending_service == {"a": 0}
+
+
+def test_multiple_in_flight_batches_affect_ordering_and_settle_out_of_order():
+    state = VTCState(wp=0, wq=2)
+    state.enqueue("a1", "a", input_tokens=0)
+    state.enqueue("b1", "b", input_tokens=0)
+    first = state.reserve_output("a1", 1)
+    second = state.reserve_output("a1", 1)
+
+    assert state.choose(["a1", "b1"]) == "b1"
+    snapshots = [state.counters["a"]]
+    assert state.settle_output(second, accepted_tokens=1)
+    snapshots.append(state.counters["a"])
+    assert state.settle_output(first, accepted_tokens=1)
+    snapshots.append(state.counters["a"])
+
+    assert snapshots == [0, 2, 4]
+    assert state.pending_service["a"] == 0
+
+
+def test_cancelling_request_releases_all_pending_service():
+    state = VTCState(wp=1, wq=2)
+    state.enqueue("cancelled", "a", input_tokens=4)
+    state.admit("cancelled")
+    first = state.reserve_output("cancelled", 1)
+    second = state.reserve_output("cancelled", 1)
+
+    state.remove("cancelled")
+
+    assert state.counters == {"a": 4}
+    assert state.pending_service == {"a": 0}
+    assert not state.settle_output(first, accepted_tokens=1)
+    assert not state.settle_output(second, accepted_tokens=1)
+
+
+def test_counter_lift_includes_pending_service():
+    state = VTCState(wp=0, wq=2)
+    state.enqueue("a1", "a", input_tokens=0)
+    state.reserve_output("a1", 10)
+
+    state.enqueue("b1", "b", input_tokens=0, active_tenants={"a"})
+
+    assert state.counters["b"] == 20
+
+
+def test_stale_output_reservation_settles_at_most_once():
+    state = VTCState(wp=0, wq=2)
+    state.enqueue("preempted", "a", input_tokens=0)
+    reservation = state.reserve_output("preempted", 1)
+
+    assert state.settle_output(reservation, accepted_tokens=1)
+    confirmed = state.counters["a"]
+    assert not state.settle_output(reservation, accepted_tokens=1)
+
+    assert state.counters["a"] == confirmed == 2
+    assert state.pending_service["a"] == 0
+
+
+def test_settlement_charges_only_tokens_accepted_from_reservation():
+    state = VTCState(wp=0, wq=2)
+    state.enqueue("stopped", "a", input_tokens=0)
+    reservation = state.reserve_output("stopped", 2)
+
+    assert state.settle_output(reservation, accepted_tokens=1)
+
+    assert state.counters["a"] == 2
+    assert state.pending_service["a"] == 0
+
+
 def test_selects_smallest_counter_and_preserves_tenant_fifo():
     state = VTCState()
     state.enqueue("b1", "b", input_tokens=2)

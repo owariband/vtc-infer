@@ -13,12 +13,26 @@ VTC-Infer 是一个基于 vLLM V1 的多租户公平调度实验项目。阶段�
 - `results/sample/`：可提交的小型示例数据
 - `results/runs/`：完整实验结果，默认不提交 Git
 
-当前已实现阶段一的 FCFS 基线数据闭环和原始 VTC 调度器；GPU 对照实验与
-prefix-reuse 实验尚待完成。VTC 使用
-`--scheduler-cls tinyinfer.scheduler.vllm_adapter.VTCScheduler` 加载，默认实验权重为
-`TINYINFER_VTC_WP=1`、`TINYINFER_VTC_WQ=2`。用于隔离自定义同步 scheduler 路径开销的
-FCFS 对照使用 `--scheduler-cls tinyinfer.scheduler.vllm_adapter.CustomFCFSScheduler`；
-该类不修改 vLLM 原生 FCFS 队列和调度逻辑。
+当前实现的是 **async admission-fair VTC**：VTC 只重排 waiting/admission，running 请求的
+逐 decode-step 次序仍由 vLLM 管理，不能表述为完整 decode VTC。服务必须同时传入
+`--async-scheduling` 和
+`--scheduler-cls tinyinfer.scheduler.vllm_adapter.VTCScheduler`。默认实验权重为
+`TINYINFER_VTC_WP=1`、`TINYINFER_VTC_WQ=2`。
+
+异步计费把已确认 service 与 in-flight pending service 分开：调度产生 output placeholder 时
+预留，实际 output 返回时按接受 token 数结算；取消会释放剩余 reservation，stale 或重复
+回调不会重复计费。公平排序使用 confirmed + pending，confirmed counter 本身只增不减。
+
+同扩展入口的 FCFS 基线使用
+`--scheduler-cls tinyinfer.scheduler.vllm_adapter.CustomAsyncFCFSScheduler`；该类只继承
+vLLM `AsyncScheduler`，不覆盖调度策略。vLLM v0.29.0 对所有自定义 scheduler 无条件打印
+同步降级提示，GPU 验证使用
+`patches/vllm-v0.29.0-custom-async-scheduler-warning.patch` 让提示按实际基类显示；补丁只改
+日志分支，不改调度行为。
+
+2026-09-13 的三轮固定配置配对实验中，异步 VTC 吞吐为对应异步 FCFS 的
+99.06%、101.56%、101.63%，tenant-b P95 TTFT 为对应基线的 11.27%、20.00%、21.85%。
+完整记录见 `results/report/vtc-async-gpu-test-20260913.md`。
 
 ## 阶段一：运行 FCFS 基线
 

@@ -1,5 +1,8 @@
 # VTC Day 2 GPU 测试简报
 
+> 本报告记录同步扩展路径的历史结果。后续异步迁移及最终配对验收见
+> `results/report/vtc-async-gpu-test-20260913.md`。
+
 实验日期：2026-09-13  
 实验主机：`ubuntu@106.75.68.80`（1 × NVIDIA GeForce RTX 4090 24GB）  
 最终代码 commit：`1dd23a9ddead4dcbe869dec6580242deee9d7c71`
