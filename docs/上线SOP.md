@@ -1551,15 +1551,45 @@ for policy in fcfs vtc; do
   helm template vtc-infer vllm/vllm-stack --version 0.1.12 \
     --namespace vtc-infer \
     -f "deploy/production-stack/values-${policy}.yaml" \
-    | yq 'select(.kind == "Deployment" and
-        .metadata.name == "vtc-infer-qwen25-15b-deployment-vllm") |
-        .spec.selector'
+    > "/workspace/phase2-chart/rendered-${policy}.yaml"
 done
+python3 - <<'PY'
+import yaml
+
+selectors = []
+for policy in ("fcfs", "vtc"):
+    path = f"/workspace/phase2-chart/rendered-{policy}.yaml"
+    for resource in yaml.safe_load_all(open(path, encoding="utf-8")):
+        if resource and resource.get("kind") == "Deployment" \
+                and resource["metadata"]["name"].endswith("deployment-vllm"):
+            selectors.append(resource["spec"]["selector"])
+assert selectors[0] == selectors[1], selectors
+print(selectors[0])
+PY
 ```
 
 失败证据保存在
 `results/remote/gpu1-20260914-phase2/attempt-03-vtc/`。不要使用删除 release 或手工 patch
 selector 的方式绕过；修正 values 后走新的 Helm revision。
+
+如果错误 selector 已经由旧 revision 创建在集群里，仅修正 values 仍不能修改 live
+Deployment。`gpu1` 的第二次升级因此产生 failed revision 4，并自动回滚到健康 revision 5；
+证据在 `attempt-04-vtc/`。确认新 FCFS/VTC selector 静态一致且 revision 5 Router smoke 通过后，
+执行一次性迁移：只删除 Engine Deployment，保留 release、PVC、Service 和监控资源，再立即
+用脚本让 Helm 重建。此过程有明确停机窗口：
+
+```bash
+export KUBECONFIG=/workspace/.kube/vtc-infer-config
+kubectl -n vtc-infer get deployment \
+  vtc-infer-qwen25-15b-deployment-vllm -o yaml \
+  > results/remote/gpu1-20260914-phase2/attempt-04-vtc/live-engine-before-delete.yaml
+kubectl -n vtc-infer delete deployment \
+  vtc-infer-qwen25-15b-deployment-vllm --wait=true
+./scripts/deploy_phase2.sh vtc
+```
+
+这条删除只用于清理由本次错误 values 创建的不可变 selector，不属于日常 FCFS/VTC 切换
+步骤。日常切换只能运行 Helm 脚本。
 
 再用 `values-invalid-scheduler.yaml` 或脚本注入不存在的 scheduler class，确认发布失败且
 engine 日志明确报错，Router 不会把它识别成健康 FCFS 后端。这个故障演练不使用
