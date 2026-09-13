@@ -1212,6 +1212,56 @@ kubectl describe node | sed -n '/Capacity:/,/System Info:/p'
 若 RuntimeClass、device plugin 或 GPU smoke 任一失败，停止在基础设施层，不开始 Helm
 部署。GPU plugin 安装清单、版本和 smoke Pod YAML 都保存在 `results/remote/.../environment/`。
 
+#### 13.3.1 `gpu1` 单节点实际安装步骤
+
+本仓库提供 `scripts/install_phase2_cluster.sh` 固定安装 k3s `v1.36.4+k3s1`、Helm
+`v3.22.0`、NVIDIA device plugin `0.20.0` 和本地 registry `registry:2.8.3`。脚本需要 sudo，
+但不要用 `sudo ./scripts/...` 整体执行；整体 sudo 会把 kubeconfig 和 Helm repo 写成 root
+所有，后续普通用户无法读取。按下列方式执行：
+
+```bash
+ssh gpu1
+cd /workspace/vtc-infer
+./scripts/install_phase2_cluster.sh
+export KUBECONFIG=/workspace/.kube/vtc-infer-config
+```
+
+`gpu1` 的 Docker daemon 已配置两个 Docker Hub mirror。k3s 使用独立的 containerd，不会
+继承 `/etc/docker/daemon.json`，因此脚本会写入：
+
+```yaml
+# /etc/rancher/k3s/registries.yaml
+mirrors:
+  "docker.io":
+    endpoint:
+      - "https://docker.1ms.run"
+      - "https://docker.xuanyuan.me"
+  "localhost:5000":
+    endpoint:
+      - "http://127.0.0.1:5000"
+```
+
+修改该文件后必须 `sudo systemctl restart k3s` 并重新等待 Node Ready。若事件包含
+`failed to pull rancher/mirrored-pause` 与 Docker Hub timeout，优先核对上述 containerd
+mirror；不要反复删除 Pod。
+
+当前 GPU 节点没有安装 NFD，NVIDIA device plugin `0.20.0` 默认 affinity 因缺少
+`feature.node.kubernetes.io/pci-10de.present` 而产生 `DESIRED=0`。单节点已由
+`nvidia-smi` 人工确认是 NVIDIA GPU 后，安装脚本显式添加 `nvidia.com/gpu.present=true`
+并以 `--set-json 'affinity={}'` 部署 DaemonSet。多节点环境不能照搬空 affinity，应安装 NFD
+或只给已验真的 GPU 节点加标签。
+
+```bash
+kubectl -n nvidia-device-plugin get daemonset,pods -o wide
+kubectl -n nvidia-device-plugin logs daemonset/nvidia-device-plugin --tail=120
+kubectl get node -o json \
+  | jq '.items[].status.capacity["nvidia.com/gpu"], .items[].status.allocatable["nvidia.com/gpu"]'
+kubectl logs vtc-infer-gpu-smoke
+```
+
+验收值必须为 capacity/allocatable 均等于 `"1"`，smoke 日志能看到 RTX 4090。Pod 早期的
+`Insufficient nvidia.com/gpu` 事件可以保留作排障证据，但最终 Pod 必须为 `Completed`。
+
 ## 14. Day 4：不可变镜像与 Production Stack 部署
 
 ### 14.1 构建并发布阶段二镜像
@@ -1229,6 +1279,26 @@ kubectl describe node | sed -n '/Capacity:/,/System Info:/p'
 本地单元测试通过后先提交，再到 GPU 主机构建、smoke、推送并取得 registry digest。正式
 部署镜像格式为 `repository:immutable-tag@sha256:digest`，不能只使用 tag。
 
+`gpu1` 没有外部 registry 登录，本次验收使用脚本创建的节点本地 registry。它是单节点测试
+环境的交付 seam，不是生产 registry：
+
+```bash
+export VTC_IMAGE_REPOSITORY=localhost:5000/vtc-infer-vllm
+./scripts/build_image.sh | tee results/remote/gpu1-<date>-phase2/image/build.log
+```
+
+脚本只允许干净 worktree，tag 包含版本和 12 位 Git SHA，推送后打印 manifest digest。
+Production Stack values 使用形如：
+
+```text
+repository = localhost:5000/vtc-infer-vllm
+tag = 0.2.0-<git-sha>@sha256:<manifest-digest>
+```
+
+基础镜像没有 `python` 命令，只有 `python3`；Dockerfile 必须使用 `python3`。基础镜像也已经
+预装 `/usr/bin/patch`，只验证并使用它，不能执行 `apt-get purge --auto-remove patch`，否则
+会连带删除 CUDA nvcc、编译器等基础镜像组件。
+
 镜像 smoke 除第 8 节项目外，还要检查：
 
 ```bash
@@ -1236,6 +1306,21 @@ vllm --version
 python -c 'from tinyinfer.scheduler.vllm_adapter import CustomAsyncFCFSScheduler, VTCScheduler'
 cat /opt/vtc-infer/build-info.json
 ```
+
+正式 GPU smoke 使用：
+
+```bash
+sudo docker run --rm --gpus all --entrypoint /bin/sh <image:tag> -c '
+  nvidia-smi -L
+  vllm --version
+  cat /opt/vtc-infer/build-info.json
+  python3 -c "from tinyinfer.scheduler.vllm_adapter import VTCScheduler"
+'
+```
+
+不要用 `import vllm._C` 作为 vLLM 0.29.0 镜像验收：该版本的扩展是多个独立 `.abi3.so`
+模块，并不提供名为 `vllm._C` 的统一 Python module。真正的 GPU kernel 可用性由服务启动、
+模型加载和推理 smoke 验证。
 
 分别启动 FCFS/VTC 后查询 `/metrics`，确认 vLLM 指标存在；若本阶段实现了自定义指标，
 同时确认 `vtc_infer_` 前缀指标存在。任何 import error、补丁应用失败或 scheduler 静默回退
@@ -1287,6 +1372,23 @@ helm template vtc-infer vllm/vllm-stack \
 检查渲染结果中只有一个 engine Deployment、一个 Router Deployment，engine 申请一张
 GPU，镜像含 digest，参数含正确 scheduler class，且不存在 KEDA/HPA、LMCache、LoRA 或
 第二个模型。把渲染结果保存为本次证据，但不提交其中可能存在的 Secret。
+
+Router 固定使用 `lmcache/lmstack-router:v0.1.12`。在网络稳定时先用 Docker 拉取、记录原始
+RepoDigest，再原样 tag/push 到 `localhost:5000/vtc-infer-router`，部署使用本地 repository
+和同一 manifest digest，避免 containerd 在 Helm install 期间再次依赖公网：
+
+```bash
+sudo docker pull lmcache/lmstack-router:v0.1.12
+sudo docker image inspect lmcache/lmstack-router:v0.1.12 \
+  --format '{{index .RepoDigests 0}}'
+sudo docker tag lmcache/lmstack-router:v0.1.12 \
+  localhost:5000/vtc-infer-router:v0.1.12
+sudo docker push localhost:5000/vtc-infer-router:v0.1.12
+```
+
+若直连拉取超过 10 分钟且没有 layer 进度，终止该次拉取并改用已配置 mirror 或 containerd
+拉取；不要并发启动多个相同 pull。最终仍需保存 source tag、source digest、本地 registry
+digest 和镜像架构，四者一致后才部署。
 
 ### 14.3 首次安装 FCFS
 

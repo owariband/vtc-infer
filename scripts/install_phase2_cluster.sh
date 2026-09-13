@@ -44,8 +44,8 @@ if ! sudo docker inspect vtc-infer-registry >/dev/null 2>&1; then
 fi
 
 sudo install -d -m 0755 /etc/rancher/k3s
-if [[ ! -f /etc/rancher/k3s/registries.yaml ]]; then
-  sudo tee /etc/rancher/k3s/registries.yaml >/dev/null <<'EOF'
+registry_config=$(mktemp /tmp/vtc-infer-registries.XXXXXX)
+cat > "$registry_config" <<'EOF'
 mirrors:
   "docker.io":
     endpoint:
@@ -55,8 +55,12 @@ mirrors:
     endpoint:
       - "http://127.0.0.1:5000"
 EOF
+if ! sudo test -f /etc/rancher/k3s/registries.yaml \
+  || ! sudo cmp --silent "$registry_config" /etc/rancher/k3s/registries.yaml; then
+  sudo install -m 0600 "$registry_config" /etc/rancher/k3s/registries.yaml
   sudo systemctl restart k3s
 fi
+rm -f "$registry_config"
 
 kubectl wait --for=condition=Ready node --all --timeout=180s
 kubectl get runtimeclass nvidia
