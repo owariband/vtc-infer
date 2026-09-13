@@ -832,6 +832,8 @@ caching 和 async 设置的运行。三次重复均需满足：
 - 已实现 `VTCState`：租户 counter、counter lift、输入/实际输出计费、租户 FIFO 和确定性
   tie-break；默认 `wp=1`、`wq=2`；
 - 已实现 vLLM `v0.29.0` 最小 `scheduler_cls` 适配器，并对 Day 2 禁用能力 fail-fast；
+- GPU 启动检查确认 `max_concurrent_batches` 不是 async scheduling 开关；自定义类继承
+  `Scheduler` 时 vLLM 会自动关闭 async scheduling，适配器不再误判该字段；
 - 本地 `pytest -q`：`19 passed`；`compileall` 通过；
 - 已对 tag `v0.29.0`（commit `98dff2a81d747d1dba01a47f939f48c3526d4206`）检查上述接口；
 - GPU 集成和三次 FCFS/VTC 对照尚未执行：`ssh ubuntu@106.75.68.80` 返回

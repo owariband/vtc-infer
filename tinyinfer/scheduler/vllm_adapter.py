@@ -71,9 +71,6 @@ class VTCScheduler(Scheduler):
             raise ValueError("VTCScheduler Day 2 does not support LoRA")
         if self.connector is not None:
             raise ValueError("VTCScheduler Day 2 does not support remote KV connectors")
-        if self.vllm_config.max_concurrent_batches > 1:
-            raise ValueError("VTCScheduler Day 2 requires async scheduling to be disabled")
-
         self.vtc = VTCState(
             wp=float(os.getenv("TINYINFER_VTC_WP", "1")),
             wq=float(os.getenv("TINYINFER_VTC_WQ", "2")),
