@@ -37,6 +37,7 @@ helm_args=(
   --set-string "servingEngineSpec.modelSpec[0].runtimeClassName=${runtime_class}"
   --set-string "servingEngineSpec.modelSpec[0].repository=${VTC_IMAGE_REPOSITORY}"
   --set-string "servingEngineSpec.modelSpec[0].tag=${VTC_IMAGE_TAG}"
+  --set-string "servingEngineSpec.modelSpec[0].initContainer.image=${VTC_IMAGE_REPOSITORY}:${VTC_IMAGE_TAG}"
   --set-string "routerSpec.repository=${VTC_ROUTER_REPOSITORY}"
   --set-string "routerSpec.tag=${VTC_ROUTER_TAG}"
 )

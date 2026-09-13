@@ -26,6 +26,29 @@ servingEngineSpec:
       pvcAccessMode:
         - ReadWriteOnce
       storageClass: local-path
+      initContainer:
+        name: model-cache
+        image: MUST_BE_OVERRIDDEN_WITH_TAG_AND_DIGEST
+        command:
+          - /bin/sh
+          - -c
+        args:
+          - |
+            set -eu
+            snapshot="/data/hub/models--Qwen--Qwen2.5-1.5B-Instruct/snapshots/${MODEL_REVISION}"
+            if [ -e "${snapshot}/config.json" ] && [ -e "${snapshot}/model.safetensors" ]; then
+              echo "model cache ready: ${snapshot}"
+              exit 0
+            fi
+            HF_HOME=/data python3 -c 'import os; from huggingface_hub import snapshot_download; snapshot_download(repo_id=os.environ["MODEL_ID"], revision=os.environ["MODEL_REVISION"], cache_dir="/data/hub")'
+        env:
+          - name: MODEL_ID
+            value: Qwen/Qwen2.5-1.5B-Instruct
+          - name: MODEL_REVISION
+            value: 989aa7980e4cf806f80c7fef2b1adb7bc71aa306
+          - name: HF_HUB_DOWNLOAD_TIMEOUT
+            value: "300"
+        mountPvcStorage: true
       vllmConfig:
         enablePrefixCaching: true
         maxModelLen: 4096
@@ -44,6 +67,10 @@ servingEngineSpec:
       env:
         - name: VTC_INFER_POLICY
           value: invalid
+        - name: HF_HUB_OFFLINE
+          value: "1"
+        - name: TRANSFORMERS_OFFLINE
+          value: "1"
   serviceMonitor:
     enabled: true
     interval: 15s

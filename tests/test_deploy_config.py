@@ -44,6 +44,12 @@ def test_phase_two_values_pin_single_gpu_and_disable_out_of_scope_features() -> 
         assert "labels" not in engine
         assert engine["strategy"] == {"type": "Recreate"}
         assert model["replicaCount"] == 1
+        assert model["initContainer"]["image"] == (
+            "MUST_BE_OVERRIDDEN_WITH_TAG_AND_DIGEST"
+        )
+        env = {item["name"]: item["value"] for item in model["env"]}
+        assert env["HF_HUB_OFFLINE"] == "1"
+        assert env["TRANSFORMERS_OFFLINE"] == "1"
         assert resources["requests"]["nvidia.com/gpu"] == "1"
         assert resources["limits"]["nvidia.com/gpu"] == "1"
         assert model["vllmConfig"].get("v0") != "1"

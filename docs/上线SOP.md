@@ -1352,6 +1352,9 @@ sudo docker run --rm --gpus all --entrypoint /bin/sh <image:tag> -c '
 - LoRA、LMCache、KEDA、Ray、speculative decoding 全部关闭；
 - Router 启用、单副本、round-robin，Router 镜像使用固定 digest；
 - 使用 PVC 或已记录的 hostPath 保存 Hugging Face 模型缓存；
+- 使用同一不可变 Engine 镜像作为 init container：固定 revision 缓存不存在时下载到 PVC，
+  完整时立即退出；主容器设置 `HF_HUB_OFFLINE=1` 和 `TRANSFORMERS_OFFLINE=1`，避免每次重启
+  再依赖 Hub 元数据请求；
 - startup/readiness/liveness probe 都检查 `/health`，startup probe 要覆盖模型冷启动窗口；
 - Service 类型默认 `ClusterIP`，通过 port-forward 做阶段二验收，不直接暴露公网 NodePort。
 
@@ -1595,6 +1598,41 @@ kubectl -n vtc-infer delete deployment \
 engine 日志明确报错，Router 不会把它识别成健康 FCFS 后端。这个故障演练不使用
 `--atomic`，以便在超时后保存失败 Pod 的 events 和日志；取证完成后立即 `helm rollback`
 到演练前记录的健康 revision，并重新执行 Router smoke。不得把故障配置留作最终状态。
+
+`gpu1` 实际演练使用非 atomic 的 `--wait --timeout 3m`，revision 7 如预期失败；Engine 日志为
+`AttributeError: ... DoesNotExist`，Pod `0/1 CrashLoopBackOff`，Helm 退出码 1。首次执行
+`./scripts/rollback_phase2.sh 6` 时，旧 CrashLoop Pod 累积 79 次 startup probe 失败并以
+exit 137 反复重启；cgroup `oom_kill=0`、节点内存和 GPU 均排除 OOM。保存现场后删除这一个
+失败 Pod，让 revision 8 Deployment 自动创建新 Pod。新 Pod 前两次因 Hugging Face
+`list_repo_files` 连接重置以 exit 1 退出，第三次成功；最终 rollback 命令耗时 1467 秒，
+revision 8 为 `deployed`，Router smoke 通过。实际操作顺序是先在终端 A 启动并保持 rollback：
+
+```bash
+./scripts/rollback_phase2.sh 6
+```
+
+确认同一 Engine Pod 已进入上述异常 CrashLoop 后，在终端 B 保存 current/previous 日志、Pod
+YAML 和 cgroup `memory.events`，然后只删除该 Pod；Deployment 自动补建后，终端 A 的 rollback
+继续等待并成功返回。最后执行 smoke：
+
+```bash
+pod=$(kubectl -n vtc-infer get pod \
+  -l app.kubernetes.io/component=serving-engine \
+  -o jsonpath='{.items[0].metadata.name}')
+kubectl -n vtc-infer logs "$pod" --previous --tail=500 \
+  > results/remote/gpu1-20260914-phase2/attempt-06-invalid-scheduler/rollback-recovery/previous-before-delete.log
+kubectl -n vtc-infer get pod "$pod" -o yaml \
+  > results/remote/gpu1-20260914-phase2/attempt-06-invalid-scheduler/rollback-recovery/crashloop-pod-before-delete.yaml
+kubectl -n vtc-infer delete pod "$pod" --wait=true
+./scripts/smoke_test_k8s.sh \
+  results/remote/gpu1-20260914-phase2/attempt-06-invalid-scheduler/smoke-after-rollback
+```
+
+为消除缓存已存在仍访问 Hub 的恢复风险，三个正式 values 都增加 model-cache init container；部署
+脚本把它的 image 覆盖为与 Engine 完全相同的 immutable tag+digest。init container 仅在固定
+revision 的 `config.json` 或 `model.safetensors` 缺失时调用 `snapshot_download`，主 Engine
+始终离线读取 PVC。首次安装仍需要 init container 能访问 Hugging Face；缓存完整后的策略切换、
+Pod 重建和回滚不再需要 Hub 网络。
 
 Day 4 退出条件：
 
