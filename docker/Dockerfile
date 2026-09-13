@@ -15,12 +15,10 @@ COPY tinyinfer ./tinyinfer
 COPY patches/vllm-v0.29.0-custom-async-scheduler-warning.patch /tmp/vllm-async-warning.patch
 
 RUN python3 -m pip install --no-cache-dir --no-deps . \
-    && apt-get update \
-    && apt-get install -y --no-install-recommends patch \
+    && command -v patch \
     && VLLM_SITE="$(python3 -c 'from pathlib import Path; import vllm; print(Path(vllm.__file__).resolve().parent.parent)')" \
     && patch --directory "${VLLM_SITE}" --strip=1 < /tmp/vllm-async-warning.patch \
-    && apt-get purge -y --auto-remove patch \
-    && rm -rf /var/lib/apt/lists/* /tmp/vllm-async-warning.patch /opt/vtc-infer-src
+    && rm -rf /tmp/vllm-async-warning.patch /opt/vtc-infer-src
 
 RUN mkdir -p /opt/vtc-infer \
     && printf '{"version":"%s","git_sha":"%s","vllm":"0.29.0"}\n' \
