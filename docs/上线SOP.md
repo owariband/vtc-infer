@@ -1570,6 +1570,13 @@ prometheus-adapter:
   enabled: false
 ```
 
+内置 Prometheus 的 `serviceMonitorSelector` 固定选择
+`app.kubernetes.io/part-of=vllm-stack`。不要在 `servingEngineSpec.labels` 中覆盖这个 Chart
+保留标签；项目身份使用 `app.kubernetes.io/instance=vtc-infer`，策略使用
+`vtc-infer-policy=fcfs|vtc`。本次首次安装后的静态复查曾发现 Engine 将 `part-of` 覆盖成
+`vtc-infer`，渲染结果会使 Prometheus 只能选择 Router ServiceMonitor，已在正式重装前移除
+该覆盖并加入配置测试。
+
 `prometheus-adapter` 和 KEDA 属于阶段三，本阶段保持关闭。如果集群已有监控栈，则把内置
 `kube-prometheus-stack` 设为 false，并为 engine/router ServiceMonitor 添加现有 Prometheus
 实际选择的低基数 label；选择结果和原因写入 `docs/phase2-runbook.md`。

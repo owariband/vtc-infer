@@ -3,7 +3,6 @@ servingEngineSpec:
   runtimeClassName: nvidia
   imagePullPolicy: IfNotPresent
   labels:
-    app.kubernetes.io/part-of: vtc-infer
     vtc-infer-policy: fcfs
   modelSpec:
     - name: qwen25-15b

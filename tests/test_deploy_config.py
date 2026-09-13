@@ -42,6 +42,7 @@ def test_phase_two_values_pin_single_gpu_and_disable_out_of_scope_features() -> 
         model = engine["modelSpec"][0]
         resources = model["resources"]
 
+        assert "app.kubernetes.io/part-of" not in engine["labels"]
         assert model["replicaCount"] == 1
         assert resources["requests"]["nvidia.com/gpu"] == "1"
         assert resources["limits"]["nvidia.com/gpu"] == "1"
