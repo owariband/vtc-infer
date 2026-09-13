@@ -47,6 +47,10 @@ sudo install -d -m 0755 /etc/rancher/k3s
 if [[ ! -f /etc/rancher/k3s/registries.yaml ]]; then
   sudo tee /etc/rancher/k3s/registries.yaml >/dev/null <<'EOF'
 mirrors:
+  "docker.io":
+    endpoint:
+      - "https://docker.1ms.run"
+      - "https://docker.xuanyuan.me"
   "localhost:5000":
     endpoint:
       - "http://127.0.0.1:5000"
@@ -57,6 +61,12 @@ fi
 kubectl wait --for=condition=Ready node --all --timeout=180s
 kubectl get runtimeclass nvidia
 
+node_name=$(kubectl get nodes -o jsonpath='{.items[0].metadata.name}')
+if ! kubectl get node "$node_name" -o jsonpath='{.metadata.labels}' \
+  | grep -Eq 'feature.node.kubernetes.io/pci-10de.present|nvidia.com/gpu.present'; then
+  kubectl label node "$node_name" nvidia.com/gpu.present=true --overwrite
+fi
+
 helm repo add nvdp https://nvidia.github.io/k8s-device-plugin --force-update
 helm repo add vllm https://vllm-project.github.io/production-stack --force-update
 helm repo update
@@ -65,6 +75,7 @@ helm upgrade --install nvidia-device-plugin nvdp/nvidia-device-plugin \
   --namespace nvidia-device-plugin \
   --create-namespace \
   --set runtimeClassName=nvidia \
+  --set-json 'affinity={}' \
   --wait --timeout 5m
 
 kubectl delete pod vtc-infer-gpu-smoke --ignore-not-found
