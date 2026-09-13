@@ -1355,6 +1355,12 @@ sudo docker run --rm --gpus all --entrypoint /bin/sh <image:tag> -c '
 - startup/readiness/liveness probe 都检查 `/health`，startup probe 要覆盖模型冷启动窗口；
 - Service 类型默认 `ClusterIP`，通过 port-forward 做阶段二验收，不直接暴露公网 NodePort。
 
+单 GPU、单副本 Engine 必须显式设置 `servingEngineSpec.strategy.type: Recreate`。上游默认
+`RollingUpdate(maxSurge=100%, maxUnavailable=0)` 会先创建新 Pod，但新旧 Pod 都申请唯一
+GPU，导致新 Pod 一直 Pending、旧 Pod 又不退出。`Recreate` 会先终止旧 Engine，再启动新
+Engine；策略切换和回滚期间存在模型重载窗口，不能表述为零停机。Router readiness 和后端
+发现必须如实反映这段不可用时间。
+
 `resources` 与 `requestGPU/requestGPUType` 两套写法只选一套；本项目选择完整 `resources`。
 如果 `kubectl get runtimeclass` 没有 `nvidia`，则把 `runtimeClassName` 显式设为空字符串。不得
 设置 `vllmConfig.v0: "1"`，因为 Chart 会据此注入 `VLLM_USE_V1=0`。

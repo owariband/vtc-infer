@@ -2,6 +2,8 @@ servingEngineSpec:
   enableEngine: true
   runtimeClassName: nvidia
   imagePullPolicy: IfNotPresent
+  strategy:
+    type: Recreate
   labels:
     vtc-infer-policy: fcfs
   modelSpec:
