@@ -52,6 +52,17 @@ FCFS 和 VTC；两者共享模型、资源、Router 与监控配置。KEDA、多
 部署前必须设置 engine 与 Router 镜像 repository，以及各自的
 `immutable-tag@sha256:digest`。完整门禁、回归和回滚流程见 `docs/上线SOP.md` 第 11～17 节。
 
+2026-09-14 的单 GPU Kubernetes 验收在干净提交 `3dba919` 上完成。FCFS/VTC 各三轮均
+完成 1989/1989 请求且零失败；VTC 吞吐为配对 FCFS 的 98.73%～101.39%，低频租户
+tenant-b 的 P95 TTFT 为 FCFS 的 9.94%～23.28%。正式高并发负载由 `gpu1` 宿主机直连
+Router ClusterIP；`kubectl port-forward` 仅用于 smoke 和管理接口，不作为性能数据路径。
+完整结果见 `results/report/vtc-phase2-kubernetes-20260914.md`。
+
+单 GPU 单副本使用 `Recreate`，因此策略切换、Pod 重建和回滚均有约 1～2 分钟不可用窗口，
+不属于零停机部署。模型 PVC 缓存完整后，init container 校验固定 revision，Engine 以
+Hugging Face/Transformers 离线模式启动。上游版本、镜像 digest 和 Chart 限制见
+`docs/upstream.md`。
+
 ## 阶段一：运行 FCFS 基线
 
 在本地或 GPU 主机创建轻量 Python 环境：

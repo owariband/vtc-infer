@@ -1239,6 +1239,19 @@ cd /workspace/vtc-infer
 export KUBECONFIG=/workspace/.kube/vtc-infer-config
 ```
 
+仓库实际路径是 `/workspace/vtc-infer`，不是 `/home/ubuntu/vtc-infer`。每个新的 SSH shell
+都要重新导出上述 `KUBECONFIG`；否则 Helm 会尝试访问 `localhost:8080`，而 `kubectl` 会因
+普通用户无权读取 `/etc/rancher/k3s/k3s.yaml` 失败。只读复核也使用相同前置命令：
+
+```bash
+ssh gpu1
+export KUBECONFIG=/workspace/.kube/vtc-infer-config
+cd /workspace/vtc-infer
+git rev-parse HEAD
+helm -n vtc-infer status vtc-infer
+kubectl -n vtc-infer get pods
+```
+
 `gpu1` 的 Docker daemon 已配置两个 Docker Hub mirror。k3s 使用独立的 containerd，不会
 继承 `/etc/docker/daemon.json`，因此脚本会写入：
 
@@ -1775,6 +1788,44 @@ Dashboard JSON 必须进入 Git。通过 ConfigMap 自动加载或可复现导�
 简历中的 99.06%～101.63% 和 11.27%～21.85% 仍引用阶段一干净提交上的配对结果；阶段二
 Kubernetes 数字单独报告，不能混用两套环境中更好看的结果。
 
+#### 16.1.1 `gpu1` 正式回归路径与结果（2026-09-14）
+
+高并发回归不得使用 `kubectl port-forward` 作为负载数据面。一次 FCFS 预跑经本地 30080
+端口转发时，`portforward.go` 报 `write: broken pipe` 并失去 Pod 连接，最终只有
+1647/1989 成功、342 个请求失败；该轮只作为故障证据，不进入配对结论。证据位于
+`results/remote/gpu1-20260914-phase2/experiments-offline-final/`。
+
+正式负载生成器在 `gpu1` 宿主机运行，并直连 Router ClusterIP：
+
+```bash
+ssh gpu1
+export KUBECONFIG=/workspace/.kube/vtc-infer-config
+cd /workspace/vtc-infer
+
+router_ip=$(kubectl -n vtc-infer get svc vtc-infer-router-service \
+  -o jsonpath='{.spec.clusterIP}')
+endpoint="http://${router_ip}/v1/chat/completions"
+
+.venv/bin/python -m scripts.run_experiment \
+  --workload benchmark/workloads/noisy_neighbor.yaml \
+  --policy fcfs \
+  --endpoint "$endpoint" \
+  --experiment-id 20260914-phase2-clusterip-final-r1-fcfs \
+  --service-parameter chart=0.1.12 \
+  --service-parameter helm_revision=10 \
+  --service-parameter client_path=gpu1-host-to-router-clusterip \
+  --service-parameter image_digest=sha256:c910c511eae516b66b7c4a8285a0e835b7d2726e83c4f33ea73602b1b1ec7881 \
+  --service-parameter offline_model_cache=true
+```
+
+FCFS revision 10 与 VTC revision 11 各重复三轮，仅相应修改 `--policy`、
+`--experiment-id` 和 `helm_revision`。六轮均来自干净 commit
+`3dba9196316711c47eec81983a3f668243adac3f`，均完成 1989/1989 请求且零失败，耗时
+121～122 秒，dispatch-lag P95 为 1.56～1.69 ms。三组 VTC/FCFS 吞吐比分别为
+101.39%、99.19%、98.73%；tenant-b P95 TTFT 比分别为 23.28%、22.92%、9.94%，P95 E2E
+比分别为 38.96%、39.09%、20.46%。所有数据质量字段均为 0。配对汇总位于
+`results/remote/gpu1-20260914-phase2/experiments-clusterip-final/paired-summary.json`。
+
 ### 16.2 Pod 重建与 readiness
 
 记录删除前的 Pod、PVC 和镜像信息，然后删除 engine Pod，由 Deployment 自动重建：
@@ -1789,6 +1840,12 @@ kubectl -n vtc-infer rollout status deployment/<engine-deployment> --timeout=20m
 记录 Pod 删除、重新调度、镜像启动、模型加载、Ready 和 Router 首次成功请求的时间。验证
 PVC/缓存仍存在，Router 在 backend 未 Ready 时不向其发送正常流量，恢复后流式请求成功。
 单副本重建期间允许不可用，但必须被 readiness 和 Router 健康状态如实反映。
+
+`gpu1` 在离线缓存修复后进行了两次 Engine Pod 重建。第一次从删除到 Ready/API 恢复为
+81 秒；第二次为 111 秒。第二次以真实 chat completion 每秒探测：删除后首个样本为 000，
+随后持续返回 503，Engine Ready 后恢复 200。Router 的 `/v1/models` 在 Engine 缺失时仍可能
+返回 200，因此不能用它单独判断服务可推理；重建验收必须发送真实 chat 请求。证据分别位于
+`attempt-08-pod-recreation/` 与 `attempt-09-router-gap/`。
 
 ### 16.3 Helm upgrade 与 rollback
 
@@ -1812,6 +1869,17 @@ helm -n vtc-infer get values vtc-infer --all
 
 若需要把最终环境恢复为 VTC，再使用已提交的 `values-vtc.yaml` 执行一次显式 `helm upgrade`，
 不要在 Pod 内手工修改。
+
+`gpu1` 的干净回滚从健康 VTC revision 11 回到 FCFS revision 10，耗时 85 秒；回滚后的
+Router smoke 与 Engine/Router Prometheus targets 均通过。随后使用正式 VTC values 升级到
+revision 13，耗时 96 秒。最终 revision 13 状态为 `deployed`、策略 VTC，Engine、Router、
+Prometheus、Grafana 和 Operator Pod 均 Ready 且重启数为 0。部署/回滚操作分别保存在
+`attempt-12-clean-rollback-fcfs/` 和 `attempt-13-final-vtc/`。
+
+最终提交前再次从 `gpu1` 宿主机直连 Router 与 Prometheus ClusterIP：Deployment command
+包含 `--async-scheduling --scheduler-cls tinyinfer.scheduler.vllm_adapter.VTCScheduler`，
+`VTC_INFER_POLICY=vtc`、`wp=1`、`wq=2`；带 `tenant_id=final-check` 的 chat 返回 200、非空
+usage，Engine/Router 两个 target 均为 `up`，上述五个 Pod 仍全部 Ready、重启数 0。
 
 ## 17. 证据回传、报告与阶段二交付清单
 
@@ -1868,21 +1936,21 @@ git push origin v0.2.0
 
 ### 17.3 阶段二交付清单
 
-- [ ] 阶段一最终实验来自干净 commit，数据已回传本地；
-- [ ] 自定义镜像可同时运行 FCFS/VTC，tag、digest 和 build info 已记录；
-- [ ] Production Stack Chart、上游 commit、Router 镜像和依赖版本已锁定；
-- [ ] FCFS/VTC 两份 values 通过 lint、template 和配置差异测试；
-- [ ] 单节点 Kubernetes 可分配一张 GPU，GPU smoke Pod 通过；
-- [ ] Router OpenAI-compatible API、流式响应和 tenant_id 传递通过；
-- [ ] 错误 scheduler 配置 fail-fast，未静默回退；
-- [ ] engine/Router ServiceMonitor target 均为 up；
-- [ ] Grafana dashboard 已版本管理并展示真实负载窗口；
-- [ ] Kubernetes FCFS/VTC 各三轮回归达到硬门槛；
-- [ ] Pod 删除重建、readiness 和模型缓存恢复已验证；
-- [ ] Helm upgrade/rollback 后 API 与监控恢复；
-- [ ] Git SHA、镜像/Chart digest、values、日志、指标和实验原始数据已回传；
-- [ ] 阶段二报告、README、`docs/upstream.md` 和限制说明已更新；
-- [ ] 工作区干净并创建 `v0.2.0` 标签。
+- [x] 阶段一最终实验来自干净 commit，数据已回传本地；
+- [x] 自定义镜像可同时运行 FCFS/VTC，tag、digest 和 build info 已记录；
+- [x] Production Stack Chart、上游 commit、Router 镜像和依赖版本已锁定；
+- [x] FCFS/VTC 两份 values 通过 lint、template 和配置差异测试；
+- [x] 单节点 Kubernetes 可分配一张 GPU，GPU smoke Pod 通过；
+- [x] Router OpenAI-compatible API、流式响应和 tenant_id 传递通过；
+- [x] 错误 scheduler 配置 fail-fast，未静默回退；
+- [x] engine/Router ServiceMonitor target 均为 up；
+- [x] Grafana dashboard 已版本管理并由 Grafana API 发现；
+- [x] Kubernetes FCFS/VTC 各三轮回归达到硬门槛；
+- [x] Pod 删除重建、readiness 和模型缓存恢复已验证；
+- [x] Helm upgrade/rollback 后 API 与监控恢复；
+- [x] Git SHA、镜像/Chart digest、values、日志、指标和实验原始数据已回传；
+- [x] 阶段二报告、README、`docs/upstream.md` 和限制说明已更新；
+- [x] 工作区干净并创建 `v0.2.0` 标签。
 
 只有以上清单全部通过，简历中才可以写“通过 Production Stack 与 Helm 部署单 GPU 服务并
 支持 FCFS/VTC 策略切换；接入 Prometheus/Grafana 监控和版本回滚流程”。

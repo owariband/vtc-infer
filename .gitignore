@@ -9,4 +9,5 @@ build/
 results/runs/*
 results/remote/*
 docs/*
+!docs/upstream.md
 AGENTS.md
