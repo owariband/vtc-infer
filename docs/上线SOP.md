@@ -554,7 +554,7 @@ TINYINFER_EXPERIMENT_ID=fcfs-noisy-neighbor-seed20260912-r3
 for TINYINFER_SAMPLE_INDEX in $(seq 1 180); do
   date +%s%3N
   curl --fail --silent http://127.0.0.1:8000/metrics \
-    | awk '$1 == "vllm:num_requests_waiting" {print $2}'
+    | awk '$1 ~ /^vllm:num_requests_waiting\{/ {print $2}'
   sleep 1
 done > "/tmp/${TINYINFER_EXPERIMENT_ID}-waiting.raw"
 ```
