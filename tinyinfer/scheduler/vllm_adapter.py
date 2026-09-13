@@ -63,6 +63,8 @@ class VTCRequestQueue(RequestQueue):
 class VTCScheduler(Scheduler):
     """vLLM Scheduler with tenant-fair ordering of waiting requests."""
 
+    DEFAULT_TENANT_ID = "__default__"
+
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         if self.vllm_config.speculative_config is not None:
@@ -83,9 +85,9 @@ class VTCScheduler(Scheduler):
         extra_args = request.sampling_params.extra_args if request.sampling_params else None
         tenant_id = extra_args.get("tenant_id") if extra_args else None
         if not isinstance(tenant_id, str) or not tenant_id:
-            raise ValueError(
-                f"request {request.request_id!r} is missing vllm_xargs.tenant_id"
-            )
+            # Exceptions escaping Scheduler.add_request terminate EngineCore in
+            # vLLM 0.29.0 instead of becoming a per-request client error.
+            return VTCScheduler.DEFAULT_TENANT_ID
         return tenant_id
 
     def add_request(self, request: Request) -> None:

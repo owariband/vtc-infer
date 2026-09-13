@@ -777,7 +777,8 @@ curl --fail --no-buffer http://127.0.0.1:8000/v1/chat/completions \
 ```
 
 随后发送两个不同 `tenant_id` 的并发短请求。验收要求：请求都有 `[DONE]` 和 usage；缺失
-`tenant_id` 的请求明确失败；日志没有 import error、deadlock、OOM、worker crash 或偷偷
+`tenant_id` 的请求归入保留的 `__default__` 租户（vLLM 0.29.0 中从 scheduler 抛错会杀死
+EngineCore）；正式实验必须显式传入租户。日志没有 import error、deadlock、OOM、worker crash 或偷偷
 切回默认 Scheduler。通过 `docker inspect` 保存环境变量和启动参数。
 
 #### 5.3.5 运行三次 VTC 对照实验
@@ -834,6 +835,8 @@ caching 和 async 设置的运行。三次重复均需满足：
 - 已实现 vLLM `v0.29.0` 最小 `scheduler_cls` 适配器，并对 Day 2 禁用能力 fail-fast；
 - GPU 启动检查确认 `max_concurrent_batches` 不是 async scheduling 开关；自定义类继承
   `Scheduler` 时 vLLM 会自动关闭 async scheduling，适配器不再误判该字段；
+- GPU 请求检查确认从 `Scheduler.add_request` 抛出租户参数异常会终止 EngineCore；
+  缺失租户因此归入 `__default__`，避免单个非法请求导致服务整体崩溃；
 - 本地 `pytest -q`：`19 passed`；`compileall` 通过；
 - 已对 tag `v0.29.0`（commit `98dff2a81d747d1dba01a47f939f48c3526d4206`）检查上述接口；
 - GPU 集成和三次 FCFS/VTC 对照尚未执行：`ssh ubuntu@106.75.68.80` 返回
