@@ -1,4 +1,4 @@
-# TinyInfer 上线与交付 SOP
+# VTC-Infer 上线与交付 SOP
 
 > 本 SOP 先覆盖阶段一的单机 MVP，并预先约定阶段二使用的镜像交付方式。阶段一不部署 Kubernetes、Production Stack、Prometheus 或 KEDA。
 
@@ -124,23 +124,22 @@ sudo docker run --rm --gpus all \
 
 ## 3. 在哪里开发
 
-所有 TinyInfer 代码都应放在本仓库：
+所有 VTC-Infer 代码都应放在本仓库：
 
 ```text
-/Users/yyu03/project/dev/tiny-infer
+/Users/yyu03/project/dev/vtc-infer
 ```
 
 不要把核心实现只改在租用机器的 `site-packages`、临时容器或某个未提交的 vLLM 目录中，否则无法复现和构建镜像。
 
-本仓库当前是独立 Git 仓库，但尚无提交和远端。首次开发前完成：
+本仓库已配置 Git 远端。本地开发前先确认工作区和远端地址：
 
 ```bash
-cd /Users/yyu03/project/dev/tiny-infer
+cd /Users/yyu03/project/dev/vtc-infer
 git status
-git add docs
-git commit -m "docs: define TinyInfer VTC implementation plan"
-git remote add origin <TINYINFER_GIT_REMOTE>
-git push -u origin main
+git remote -v
+git remote set-url origin https://github.com/owariband/vtc-infer.git
+git pull --ff-only
 ```
 
 如果远端默认分支或地址不同，相应替换；不要重复添加已经存在的 `origin`。
@@ -151,8 +150,8 @@ git push -u origin main
 sudo mkdir -p /workspace
 sudo chown "$(id -u):$(id -g)" /workspace
 cd /workspace
-git clone <TINYINFER_GIT_REMOTE> tiny-infer
-cd tiny-infer
+git clone https://github.com/owariband/vtc-infer.git vtc-infer
+cd vtc-infer
 git rev-parse HEAD
 ```
 
@@ -161,7 +160,7 @@ git rev-parse HEAD
 建议按实施方案逐步形成：
 
 ```text
-tiny-infer/
+vtc-infer/
 ├── scheduler/          # VTC、VTC-Miss 和租户队列
 ├── benchmark/          # 开环负载生成器与固定 workload
 ├── analysis/           # 汇总、指标和绘图
@@ -186,7 +185,7 @@ tiny-infer/
 3. patch 文件保存在 `patches/`，并在 README 中记录基准 commit、应用命令和受影响文件；
 4. 禁止只在租用机器中手改 vLLM 源码而不导出 patch。
 
-即使最终需要 patch，租用机器上的 vLLM checkout 也只是上游依赖和调试工作区；TinyInfer 仓库仍是项目交付、测试、配置与 patch 的唯一事实来源。
+即使最终需要 patch，租用机器上的 vLLM checkout 也只是上游依赖和调试工作区；VTC-Infer 仓库仍是项目交付、测试、配置与 patch 的唯一事实来源。
 
 ## 5. 阶段一动作清单
 
@@ -289,16 +288,15 @@ sudo docker run --rm --gpus all \
 
 验收：容器中能看到同一张 RTX 4090，且没有 driver/runtime 错误。
 
-#### 步骤 5：初始化 TinyInfer 远端仓库
+#### 步骤 5：同步 VTC-Infer 远端仓库
 
-本地开发机上的 `/Users/yyu03/project/dev/tiny-infer` 是当前项目仓库。先在本地完成首个提交并配置私有或公开远端：
+本地开发机上的 `/Users/yyu03/project/dev/vtc-infer` 是当前项目仓库。先确认本地仓库指向正确的远端：
 
 ```bash
-cd /Users/yyu03/project/dev/tiny-infer
+cd /Users/yyu03/project/dev/vtc-infer
 git status
-git add docs
-git commit -m "docs: define TinyInfer implementation and release SOP"
-git remote add origin <TINYINFER_GIT_REMOTE>
+git remote set-url origin https://github.com/owariband/vtc-infer.git
+git remote -v
 git push -u origin main
 ```
 
@@ -308,8 +306,8 @@ git push -u origin main
 sudo mkdir -p /workspace /data/tinyinfer/huggingface /data/tinyinfer/vllm-cache
 sudo chown -R "$(id -u):$(id -g)" /workspace /data/tinyinfer
 cd /workspace
-git clone <TINYINFER_GIT_REMOTE> tiny-infer
-cd tiny-infer
+git clone https://github.com/owariband/vtc-infer.git vtc-infer
+cd vtc-infer
 git rev-parse HEAD
 ```
 
@@ -362,7 +360,7 @@ curl --fail http://127.0.0.1:8000/v1/chat/completions \
   -H 'Content-Type: application/json' \
   -d '{
     "model": "Qwen/Qwen2.5-1.5B-Instruct",
-    "messages": [{"role": "user", "content": "Reply with exactly: TinyInfer ready"}],
+    "messages": [{"role": "user", "content": "Reply with exactly: VTC-Infer ready"}],
     "temperature": 0,
     "max_tokens": 16
   }' | jq
@@ -404,7 +402,7 @@ Day 0 最终退出条件：
 - vLLM `v0.29.0` 官方镜像 digest 已记录；
 - Qwen2.5-1.5B 的 health、models 和 chat completion 全部成功；
 - 模型与 vLLM cache 持久化到 `/data/tinyinfer`；
-- TinyInfer 远端仓库可从 GPU 机器 clone、pull 和定位到明确 commit；
+- VTC-Infer 远端仓库可从 GPU 机器 clone、pull 和定位到明确 commit；
 - 删除测试容器后，磁盘仍至少保留 25Gi 可用空间。
 
 ### 5.2 Day 1：FCFS 基线
@@ -434,11 +432,11 @@ Day 1 按下面的 5.2.1～5.2.8 依次执行。退出条件是：
 
 #### 5.2.1 同步代码并安装负载生成器
 
-以下命令在 Ubuntu GPU 主机的 TinyInfer checkout 中执行。正式实验必须使用已提交的
+以下命令在 Ubuntu GPU 主机的 VTC-Infer checkout 中执行。正式实验必须使用已提交的
 commit；不要一边修改 workload 一边复用同一个实验编号。
 
 ```bash
-cd /workspace/tiny-infer
+cd /workspace/vtc-infer
 git pull --ff-only
 git status --short
 git rev-parse HEAD
@@ -472,7 +470,7 @@ curl --fail --no-buffer http://127.0.0.1:8000/v1/chat/completions \
   -H 'Content-Type: application/json' \
   -d '{
     "model": "Qwen/Qwen2.5-1.5B-Instruct",
-    "messages": [{"role": "user", "content": "Reply with TinyInfer ready"}],
+    "messages": [{"role": "user", "content": "Reply with VTC-Infer ready"}],
     "temperature": 0,
     "max_tokens": 16,
     "stream": true,
@@ -682,7 +680,7 @@ Day 1 通过后再进入 VTC 开发。后续 FCFS 与 VTC 必须复用同一 wor
 不强制。阶段一的首要目标是验证调度算法和实验可信度，可以先通过官方 vLLM 容器挂载本仓库代码进行开发：
 
 ```text
-宿主机 TinyInfer checkout
+宿主机 VTC-Infer checkout
 → 只读或开发态挂载到容器
 → 安装本地 scheduler 包
 → 启动固定版本 vLLM
@@ -697,12 +695,12 @@ Day 1 通过后再进入 VTC 开发。后续 FCFS 与 VTC 必须复用同一 wor
 在 `docker/Dockerfile` 中：
 
 1. 使用固定 digest 的官方 `vllm/vllm-openai:v0.29.0` 作为基础镜像；
-2. 构建 TinyInfer wheel；
+2. 构建 VTC-Infer wheel；
 3. 使用 `pip install --no-deps` 安装 wheel；
 4. 设置默认 entrypoint 或保留 vLLM 原有 entrypoint；
-5. 通过启动参数选择 TinyInfer scheduler。
+5. 通过启动参数选择 VTC-Infer scheduler。
 
-这种方式构建快、变更面小，也容易证明 TinyInfer 与上游 vLLM 的边界。
+这种方式构建快、变更面小，也容易证明 VTC-Infer 与上游 vLLM 的边界。
 
 ### 7.2 备选路径：必须修改 vLLM 内部
 
@@ -712,7 +710,7 @@ Day 1 通过后再进入 VTC 开发。后续 FCFS 与 VTC 必须复用同一 wor
 2. 使用仓库内 `patches/*.patch` 应用补丁；
 3. patch 应用失败时立即终止构建；
 4. 构建并安装 patched vLLM；
-5. 在镜像 label 和实验 manifest 中写入上游 commit 与 TinyInfer commit。
+5. 在镜像 label 和实验 manifest 中写入上游 commit 与 VTC-Infer commit。
 
 不要在 Dockerfile 中 clone 浮动的 `main`，也不要下载未经校验的临时源码包。
 
@@ -723,7 +721,7 @@ Day 1 通过后再进入 VTC 开发。后续 FCFS 与 VTC 必须复用同一 wor
 先定义本次发布标识。镜像标签必须包含版本和 Git SHA，不使用 `latest` 作为部署依据：
 
 ```bash
-cd /Users/yyu03/project/dev/tiny-infer
+cd /Users/yyu03/project/dev/vtc-infer
 TINYINFER_REGISTRY_IMAGE=<REGISTRY>/<NAMESPACE>/tinyinfer-vllm
 TINYINFER_VERSION=0.1.0
 TINYINFER_GIT_SHA=$(git rev-parse --short=12 HEAD)
@@ -751,7 +749,7 @@ docker run --rm --gpus all ${TINYINFER_IMAGE} nvidia-smi
 smoke test 至少验证：
 
 - 镜像能看到 GPU；
-- vLLM 版本和 TinyInfer Git SHA 正确；
+- vLLM 版本和 VTC-Infer Git SHA 正确；
 - FCFS 与 VTC 配置都能启动；
 - `/health`、`/v1/models` 和一次流式请求成功；
 - 配置错误时启动失败，而不是静默退回 FCFS。
@@ -784,7 +782,7 @@ docker buildx imagetools inspect ${TINYINFER_IMAGE}
 发布代码版本：
 
 ```bash
-git tag -a v0.1.0 -m "TinyInfer phase-1 MVP"
+git tag -a v0.1.0 -m "VTC-Infer phase-1 MVP"
 git push origin v0.1.0
 ```
 
@@ -792,7 +790,7 @@ git push origin v0.1.0
 
 ## 10. 阶段一交付清单
 
-- [ ] TinyInfer Git 远端和首个基线提交；
+- [ ] VTC-Infer Git 远端和首个基线提交；
 - [ ] 固定版本的 vLLM、模型 revision 和依赖锁；
 - [ ] FCFS、VTC、VTC-Miss 策略实现与配置开关；
 - [ ] 单元测试和镜像 smoke test；
