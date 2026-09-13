@@ -12,6 +12,7 @@ values_file="$repo_root/deploy/production-stack/values-${policy}.yaml"
 
 : "${VTC_IMAGE_REPOSITORY:?set the engine image repository}"
 : "${VTC_IMAGE_TAG:?set immutable-tag@sha256:digest}"
+: "${VTC_ROUTER_REPOSITORY:?set the router image repository}"
 : "${VTC_ROUTER_TAG:?set v0.1.12@sha256:digest}"
 
 digest_pattern='@sha256:[0-9a-f]{64}$'
@@ -36,6 +37,7 @@ helm_args=(
   --set-string "servingEngineSpec.modelSpec[0].runtimeClassName=${runtime_class}"
   --set-string "servingEngineSpec.modelSpec[0].repository=${VTC_IMAGE_REPOSITORY}"
   --set-string "servingEngineSpec.modelSpec[0].tag=${VTC_IMAGE_TAG}"
+  --set-string "routerSpec.repository=${VTC_ROUTER_REPOSITORY}"
   --set-string "routerSpec.tag=${VTC_ROUTER_TAG}"
 )
 

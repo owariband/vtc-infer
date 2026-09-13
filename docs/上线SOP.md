@@ -1386,6 +1386,13 @@ sudo docker tag lmcache/lmstack-router:v0.1.12 \
 sudo docker push localhost:5000/vtc-infer-router:v0.1.12
 ```
 
+本地转存后的阶段二环境变量为：
+
+```bash
+export VTC_ROUTER_REPOSITORY=localhost:5000/vtc-infer-router
+export VTC_ROUTER_TAG=v0.1.12@sha256:d8cfaf022f0179ba3f9d2bbcb95c602bd639b700f7a6ac409626758d1a366483
+```
+
 若直连拉取超过 10 分钟且没有 layer 进度，终止该次拉取并改用已配置 mirror 或 containerd
 拉取；不要并发启动多个相同 pull。最终仍需保存 source tag、source digest、本地 registry
 digest 和镜像架构，四者一致后才部署。

@@ -9,7 +9,7 @@ production_stack:
 router:
   repository: lmcache/lmstack-router
   tag: v0.1.12
-  digest: RESOLVE_BEFORE_DEPLOY
+  digest: d8cfaf022f0179ba3f9d2bbcb95c602bd639b700f7a6ac409626758d1a366483
 kubernetes:
   distribution: k3s
   version: v1.36.4+k3s1

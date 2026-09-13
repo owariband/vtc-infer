@@ -49,8 +49,8 @@ FCFS 和 VTC；两者共享模型、资源、Router 与监控配置。KEDA、多
 - `scripts/smoke_test_k8s.sh`：只经 Production Stack Router 验证 OpenAI-compatible API；
 - `scripts/collect_phase2_evidence.sh`：收集不含 Secret 的部署、日志与版本证据。
 
-部署前必须设置 engine 镜像 repository、`immutable-tag@sha256:digest` 和 Router 的
-`v0.1.12@sha256:digest`。完整门禁、回归和回滚流程见 `docs/上线SOP.md` 第 11～17 节。
+部署前必须设置 engine 与 Router 镜像 repository，以及各自的
+`immutable-tag@sha256:digest`。完整门禁、回归和回滚流程见 `docs/上线SOP.md` 第 11～17 节。
 
 ## 阶段一：运行 FCFS 基线
 
