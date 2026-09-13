@@ -4,8 +4,6 @@ servingEngineSpec:
   imagePullPolicy: IfNotPresent
   strategy:
     type: Recreate
-  labels:
-    vtc-infer-policy: fcfs
   modelSpec:
     - name: qwen25-15b
       enabled: true

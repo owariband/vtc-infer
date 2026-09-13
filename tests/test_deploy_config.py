@@ -15,7 +15,6 @@ def load_values(policy: str) -> dict:
 
 def normalized_policy_values(values: dict) -> dict:
     result = copy.deepcopy(values)
-    result["servingEngineSpec"]["labels"]["vtc-infer-policy"] = "POLICY"
     model = result["servingEngineSpec"]["modelSpec"][0]
     model["vllmConfig"]["extraArgs"] = ["POLICY_ARGS"]
     model["env"] = [
@@ -42,7 +41,7 @@ def test_phase_two_values_pin_single_gpu_and_disable_out_of_scope_features() -> 
         model = engine["modelSpec"][0]
         resources = model["resources"]
 
-        assert "app.kubernetes.io/part-of" not in engine["labels"]
+        assert "labels" not in engine
         assert engine["strategy"] == {"type": "Recreate"}
         assert model["replicaCount"] == 1
         assert resources["requests"]["nvidia.com/gpu"] == "1"

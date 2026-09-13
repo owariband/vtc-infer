@@ -1540,6 +1540,27 @@ helm upgrade vtc-infer vllm/vllm-stack \
 等待 rollout 完成后重复 Router smoke，确认实际 args 和 env 为 `VTCScheduler`、`wp=1`、
 `wq=2`。FCFS/VTC 切换不得通过进入 Pod 手工改文件完成。
 
+`gpu1` 第一次 FCFS→VTC 升级曾因 `servingEngineSpec.labels.vtc-infer-policy` 失败。Chart 会把
+该自定义 label 同时渲染进 Deployment selector；从 `fcfs` 改为 `vtc` 等于修改 Kubernetes
+不可变的 `spec.selector`。Helm revision 2 失败后，`--atomic` 自动创建 revision 3 并回滚到
+健康 FCFS，Router smoke 再次通过。正式 values 不再设置任何随策略变化的
+`servingEngineSpec.labels`，切换前可用下列静态检查确认两个 selector 完全相同：
+
+```bash
+for policy in fcfs vtc; do
+  helm template vtc-infer vllm/vllm-stack --version 0.1.12 \
+    --namespace vtc-infer \
+    -f "deploy/production-stack/values-${policy}.yaml" \
+    | yq 'select(.kind == "Deployment" and
+        .metadata.name == "vtc-infer-qwen25-15b-deployment-vllm") |
+        .spec.selector'
+done
+```
+
+失败证据保存在
+`results/remote/gpu1-20260914-phase2/attempt-03-vtc/`。不要使用删除 release 或手工 patch
+selector 的方式绕过；修正 values 后走新的 Helm revision。
+
 再用 `values-invalid-scheduler.yaml` 或脚本注入不存在的 scheduler class，确认发布失败且
 engine 日志明确报错，Router 不会把它识别成健康 FCFS 后端。这个故障演练不使用
 `--atomic`，以便在超时后保存失败 Pod 的 events 和日志；取证完成后立即 `helm rollback`
@@ -1578,8 +1599,8 @@ prometheus-adapter:
 
 内置 Prometheus 的 `serviceMonitorSelector` 固定选择
 `app.kubernetes.io/part-of=vllm-stack`。不要在 `servingEngineSpec.labels` 中覆盖这个 Chart
-保留标签；项目身份使用 `app.kubernetes.io/instance=vtc-infer`，策略使用
-`vtc-infer-policy=fcfs|vtc`。本次首次安装后的静态复查曾发现 Engine 将 `part-of` 覆盖成
+保留标签；项目身份使用 `app.kubernetes.io/instance=vtc-infer`，策略由 scheduler class、
+`VTC_INFER_POLICY` 环境变量和 Helm revision 记录。本次首次安装后的静态复查曾发现 Engine 将 `part-of` 覆盖成
 `vtc-infer`，渲染结果会使 Prometheus 只能选择 Router ServiceMonitor，已在正式重装前移除
 该覆盖并加入配置测试。
 
