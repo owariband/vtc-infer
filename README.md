@@ -34,6 +34,24 @@ vLLM `AsyncScheduler`，不覆盖调度策略。vLLM v0.29.0 对所有自定义 
 99.06%、101.56%、101.63%，tenant-b P95 TTFT 为对应基线的 11.27%、20.00%、21.85%。
 完整记录见 `results/report/vtc-async-gpu-test-20260913.md`。
 
+## 阶段二：Production Stack 交付
+
+阶段二使用固定版本 Production Stack Chart `0.1.12`，把同一不可变镜像部署为单副本、
+单 GPU 服务。`deploy/production-stack/values-fcfs.yaml` 与 `values-vtc.yaml` 分别选择异步
+FCFS 和 VTC；两者共享模型、资源、Router 与监控配置。KEDA、多副本和集群级公平不属于
+本阶段。
+
+主要入口：
+
+- `scripts/install_phase2_cluster.sh`：安装固定版本的单节点 k3s、Helm 和 NVIDIA device plugin；
+- `scripts/build_image.sh`：从干净 commit 构建并推送带 digest 的自定义 vLLM 镜像；
+- `scripts/deploy_phase2.sh <fcfs|vtc>`：通过 Helm 部署或切换调度策略；
+- `scripts/smoke_test_k8s.sh`：只经 Production Stack Router 验证 OpenAI-compatible API；
+- `scripts/collect_phase2_evidence.sh`：收集不含 Secret 的部署、日志与版本证据。
+
+部署前必须设置 engine 镜像 repository、`immutable-tag@sha256:digest` 和 Router 的
+`v0.1.12@sha256:digest`。完整门禁、回归和回滚流程见 `docs/上线SOP.md` 第 11～17 节。
+
 ## 阶段一：运行 FCFS 基线
 
 在本地或 GPU 主机创建轻量 Python 环境：

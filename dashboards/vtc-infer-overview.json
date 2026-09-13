@@ -1,0 +1,112 @@
+{
+  "annotations": {"list": []},
+  "editable": true,
+  "graphTooltip": 1,
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Engine / Router Targets",
+      "id": 1,
+      "gridPos": {"h": 6, "w": 6, "x": 0, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "targets": [{"expr": "sum(up{namespace=\"vtc-infer\"})", "refId": "A"}]
+    },
+    {
+      "type": "timeseries",
+      "title": "Running and Waiting Requests",
+      "id": 2,
+      "gridPos": {"h": 8, "w": 9, "x": 6, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "targets": [
+        {"expr": "sum(vllm:num_requests_running)", "legendFormat": "running", "refId": "A"},
+        {"expr": "sum(vllm:num_requests_waiting)", "legendFormat": "waiting", "refId": "B"}
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "P95 TTFT and E2E Latency",
+      "id": 3,
+      "gridPos": {"h": 8, "w": 9, "x": 15, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "targets": [
+        {"expr": "histogram_quantile(0.95, sum by (le) (rate(vllm:time_to_first_token_seconds_bucket[5m])))", "legendFormat": "P95 TTFT", "refId": "A"},
+        {"expr": "histogram_quantile(0.95, sum by (le) (rate(vllm:e2e_request_latency_seconds_bucket[5m])))", "legendFormat": "P95 E2E", "refId": "B"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "s"}, "overrides": []}
+    },
+    {
+      "type": "timeseries",
+      "title": "Token Throughput",
+      "id": 4,
+      "gridPos": {"h": 8, "w": 8, "x": 0, "y": 8},
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "targets": [
+        {"expr": "sum(rate(vllm:prompt_tokens_total[1m]))", "legendFormat": "prompt tok/s", "refId": "A"},
+        {"expr": "sum(rate(vllm:generation_tokens_total[1m]))", "legendFormat": "generation tok/s", "refId": "B"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "tps"}, "overrides": []}
+    },
+    {
+      "type": "timeseries",
+      "title": "KV Cache Usage and Prefix Hit Ratio",
+      "id": 5,
+      "gridPos": {"h": 8, "w": 8, "x": 8, "y": 8},
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "targets": [
+        {"expr": "max(vllm:kv_cache_usage_perc)", "legendFormat": "KV usage", "refId": "A"},
+        {"expr": "sum(rate(vllm:prefix_cache_hits_total[5m])) / clamp_min(sum(rate(vllm:prefix_cache_queries_total[5m])), 1)", "legendFormat": "prefix hit ratio", "refId": "B"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "percentunit", "min": 0, "max": 1}, "overrides": []}
+    },
+    {
+      "type": "timeseries",
+      "title": "VTC Active Tenants and Service Gap",
+      "id": 6,
+      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 8},
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "targets": [
+        {"expr": "max(vtc_infer_active_tenants)", "legendFormat": "active tenants", "refId": "A"},
+        {"expr": "max(vtc_infer_service_gap)", "legendFormat": "service gap", "refId": "B"}
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "VTC Selection P95",
+      "id": 7,
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16},
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "targets": [
+        {"expr": "histogram_quantile(0.95, sum by (le) (rate(vtc_infer_scheduler_selection_seconds_bucket[5m])))", "legendFormat": "P95 selection", "refId": "A"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "s"}, "overrides": []}
+    },
+    {
+      "type": "timeseries",
+      "title": "Successful Requests and Preemptions",
+      "id": 8,
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16},
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "targets": [
+        {"expr": "sum(rate(vllm:request_success_total[1m]))", "legendFormat": "success/s", "refId": "A"},
+        {"expr": "sum(rate(vllm:num_preemptions_total[1m]))", "legendFormat": "preemptions/s", "refId": "B"}
+      ]
+    }
+  ],
+  "schemaVersion": 41,
+  "tags": ["vtc-infer", "vllm"],
+  "templating": {
+    "list": [
+      {
+        "name": "DS_PROMETHEUS",
+        "type": "datasource",
+        "query": "prometheus",
+        "current": {}
+      }
+    ]
+  },
+  "time": {"from": "now-30m", "to": "now"},
+  "timezone": "browser",
+  "title": "VTC-Infer Overview",
+  "uid": "vtc-infer-overview",
+  "version": 1
+}

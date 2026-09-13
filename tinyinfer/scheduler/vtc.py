@@ -62,6 +62,19 @@ class VTCState:
             for tenant_id, counter in self._counters.items()
         }
 
+    @property
+    def active_tenant_count(self) -> int:
+        return len({entry.tenant_id for entry in self._requests.values()})
+
+    @property
+    def active_service_gap(self) -> float:
+        active = {entry.tenant_id for entry in self._requests.values()}
+        values = [
+            self._counters[tenant_id] + self._pending.get(tenant_id, 0.0)
+            for tenant_id in active
+        ]
+        return max(values) - min(values) if values else 0.0
+
     def tenant_for(self, request_id: str) -> str:
         return self._requests[request_id].tenant_id
 

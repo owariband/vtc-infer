@@ -27,6 +27,22 @@ def test_output_reservation_is_observable_until_settled():
     assert state.pending_service == {"a": 0}
 
 
+def test_active_tenant_metrics_only_include_outstanding_requests():
+    state = VTCState(wp=1, wq=2)
+    state.enqueue("a1", "a", input_tokens=10)
+    state.enqueue("b1", "b", input_tokens=4, active_tenants={"a"})
+
+    assert state.active_tenant_count == 2
+    assert state.active_service_gap == 0
+
+    state.admit("a1")
+    assert state.active_service_gap == 10
+
+    state.remove("a1")
+    assert state.active_tenant_count == 1
+    assert state.active_service_gap == 0
+
+
 def test_multiple_in_flight_batches_affect_ordering_and_settle_out_of_order():
     state = VTCState(wp=0, wq=2)
     state.enqueue("a1", "a", input_tokens=0)

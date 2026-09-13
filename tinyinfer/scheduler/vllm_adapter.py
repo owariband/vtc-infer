@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import time
 from collections.abc import Iterable, Iterator
 
 from vllm.v1.core.sched.async_scheduler import AsyncScheduler
@@ -11,6 +12,7 @@ from vllm.v1.core.sched.scheduler import Scheduler
 from vllm.v1.request import Request
 
 from .vtc import VTCState
+from tinyinfer.telemetry.metrics import SchedulerMetrics, scheduler_metrics
 
 
 class CustomFCFSScheduler(Scheduler):
@@ -26,8 +28,9 @@ class CustomAsyncFCFSScheduler(AsyncScheduler):
 
 
 class VTCRequestQueue(RequestQueue):
-    def __init__(self, state: VTCState) -> None:
+    def __init__(self, state: VTCState, metrics: SchedulerMetrics) -> None:
         self.state = state
+        self.metrics = metrics
         self._requests: list[Request] = []
 
     def add_request(self, request: Request) -> None:
@@ -37,12 +40,16 @@ class VTCRequestQueue(RequestQueue):
         request = self.peek_request()
         self._requests.remove(request)
         self.state.admit(request.request_id)
+        self.metrics.record_decision()
+        self.metrics.observe_state(self.state)
         return request
 
     def peek_request(self) -> Request:
         if not self._requests:
             raise IndexError("peek from an empty queue")
+        started = time.perf_counter()
         request_id = self.state.choose(r.request_id for r in self._requests)
+        self.metrics.observe_selection(time.perf_counter() - started)
         return next(r for r in self._requests if r.request_id == request_id)
 
     def prepend_request(self, request: Request) -> None:
@@ -90,8 +97,10 @@ class VTCScheduler(AsyncScheduler):
             wp=float(os.getenv("TINYINFER_VTC_WP", "1")),
             wq=float(os.getenv("TINYINFER_VTC_WQ", "2")),
         )
-        self.waiting = VTCRequestQueue(self.vtc)
-        self.skipped_waiting = VTCRequestQueue(self.vtc)
+        self._vtc_metrics = scheduler_metrics()
+        self._vtc_metrics.mark_build()
+        self.waiting = VTCRequestQueue(self.vtc, self._vtc_metrics)
+        self.skipped_waiting = VTCRequestQueue(self.vtc, self._vtc_metrics)
         self._vtc_batch_reservations: dict[int, dict[str, int]] = {}
 
     @staticmethod
@@ -119,6 +128,7 @@ class VTCScheduler(AsyncScheduler):
                 active_tenants=active_tenants,
             )
         super().add_request(request)
+        self._vtc_metrics.observe_state(self.vtc)
 
     def _update_after_schedule(self, scheduler_output) -> None:
         placeholders_before = {
@@ -159,10 +169,12 @@ class VTCScheduler(AsyncScheduler):
             )
         for request_id in completed:
             self.vtc.remove(request_id)
+        self._vtc_metrics.observe_state(self.vtc)
         return outputs
 
     def finish_requests(self, request_ids, finished_status):
         finished = super().finish_requests(request_ids, finished_status)
         for request in finished:
             self.vtc.remove(request.request_id)
+        self._vtc_metrics.observe_state(self.vtc)
         return finished

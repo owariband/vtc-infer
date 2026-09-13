@@ -1,0 +1,19 @@
+production_stack:
+  repository: https://github.com/vllm-project/production-stack.git
+  chart_repository: https://vllm-project.github.io/production-stack
+  chart: vllm-stack
+  chart_version: "0.1.12"
+  upstream_tag: vllm-stack-0.1.12
+  upstream_commit: 66b60661aa3052810859a417559e9e830772a091
+  chart_archive_sha256: a33248ff71c12b600774ec084c1d68e2a632d00132fc0f8b6cad4b52ca9eb0d3
+router:
+  repository: lmcache/lmstack-router
+  tag: v0.1.12
+  digest: RESOLVE_BEFORE_DEPLOY
+kubernetes:
+  distribution: k3s
+  version: v1.36.4+k3s1
+nvidia_device_plugin:
+  chart_version: 0.20.0
+monitoring:
+  kube_prometheus_stack_chart_version: 82.4.3

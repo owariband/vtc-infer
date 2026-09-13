@@ -1,0 +1,26 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: vtc-infer
+  namespace: vtc-infer
+  labels:
+    app.kubernetes.io/part-of: vtc-infer
+    release: vtc-infer
+spec:
+  groups:
+    - name: vtc-infer.rules
+      rules:
+        - alert: VTCInferEngineDown
+          expr: up{namespace="vtc-infer",service=~".*engine.*"} == 0
+          for: 2m
+          labels:
+            severity: warning
+          annotations:
+            summary: VTC-Infer engine metrics target is down
+        - alert: VTCInferSustainedQueue
+          expr: vllm:num_requests_waiting > 0
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: VTC-Infer has sustained waiting requests

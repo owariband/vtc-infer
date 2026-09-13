@@ -1,0 +1,106 @@
+servingEngineSpec:
+  enableEngine: true
+  runtimeClassName: nvidia
+  imagePullPolicy: IfNotPresent
+  labels:
+    app.kubernetes.io/part-of: vtc-infer
+    vtc-infer-policy: fcfs
+  modelSpec:
+    - name: qwen25-15b
+      enabled: true
+      repository: localhost:5000/vtc-infer-vllm
+      tag: MUST_BE_OVERRIDDEN_WITH_TAG_AND_DIGEST
+      modelURL: Qwen/Qwen2.5-1.5B-Instruct
+      modelRevision: 989aa7980e4cf806f80c7fef2b1adb7bc71aa306
+      replicaCount: 1
+      runtimeClassName: nvidia
+      resources:
+        requests:
+          cpu: "6"
+          memory: 16Gi
+          nvidia.com/gpu: "1"
+        limits:
+          cpu: "8"
+          memory: 32Gi
+          nvidia.com/gpu: "1"
+      pvcStorage: 20Gi
+      pvcAccessMode:
+        - ReadWriteOnce
+      storageClass: local-path
+      vllmConfig:
+        enablePrefixCaching: true
+        maxModelLen: 4096
+        tensorParallelSize: 1
+        maxNumSeqs: 16
+        gpuMemoryUtilization: 0.9
+        extraArgs:
+          - --async-scheduling
+          - --scheduler-cls
+          - tinyinfer.scheduler.vllm_adapter.CustomAsyncFCFSScheduler
+      enableLoRA: false
+      lmcacheConfig:
+        enabled: false
+      keda:
+        enabled: false
+      env:
+        - name: VTC_INFER_POLICY
+          value: fcfs
+  serviceMonitor:
+    enabled: true
+    interval: 15s
+    scrapeTimeout: 10s
+  startupProbe:
+    initialDelaySeconds: 15
+    periodSeconds: 10
+    failureThreshold: 90
+    httpGet:
+      path: /health
+      port: 8000
+  readinessProbe:
+    initialDelaySeconds: 5
+    periodSeconds: 5
+    failureThreshold: 3
+    httpGet:
+      path: /health
+      port: 8000
+  livenessProbe:
+    initialDelaySeconds: 15
+    periodSeconds: 10
+    failureThreshold: 3
+    httpGet:
+      path: /health
+      port: 8000
+
+routerSpec:
+  enableRouter: true
+  repository: lmcache/lmstack-router
+  tag: MUST_BE_OVERRIDDEN_WITH_TAG_AND_DIGEST
+  imagePullPolicy: IfNotPresent
+  replicaCount: 1
+  serviceType: ClusterIP
+  servicePort: 80
+  serviceDiscovery: k8s
+  routingLogic: roundrobin
+  autoscaling:
+    enabled: false
+  serviceMonitor:
+    enabled: true
+    interval: 15s
+    scrapeTimeout: 10s
+  resources:
+    requests:
+      cpu: 400m
+      memory: 1Gi
+    limits:
+      memory: 1Gi
+
+cacheserverSpec:
+  enabled: false
+loraController:
+  enabled: false
+grafanaDashboards:
+  enabled: true
+kube-prometheus-stack:
+  enabled: true
+prometheus-adapter:
+  enabled: false

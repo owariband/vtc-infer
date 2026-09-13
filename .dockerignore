@@ -1,0 +1,12 @@
+.git
+.gitignore
+.pytest_cache
+.venv
+__pycache__
+*.pyc
+build
+dist
+docs-ignore
+results/remote
+results/runs
+vtc_infer.egg-info
