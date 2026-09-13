@@ -7,7 +7,7 @@ request_timeout_seconds: 300
 max_in_flight: 512
 tenants:
   - tenant_id: tenant-a
-    request_rate: 8.0
+    request_rate: 12.5
     prompt_tokens: 512
     max_output_tokens: 256
     system_prompt: Answer directly and continue until the requested token budget is used.
