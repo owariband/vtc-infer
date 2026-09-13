@@ -7,4 +7,5 @@ build/
 *.egg-info/
 
 results/runs/*
-!results/runs/.gitkeep
+results/remote/*
+docs/*

@@ -517,7 +517,7 @@ prompt 的目标长度；报告以服务端 usage 返回的实际 token 数为�
 明确指定实验编号，避免同一分钟运行时目录名冲突。以下示例中的编号应按实际重复次数修改：
 
 ```bash
-TINYINFER_EXPERIMENT_ID=fcfs-noisy-neighbor-seed20260912-r1
+TINYINFER_EXPERIMENT_ID=fcfs-noisy-neighbor-seed20260912-r3
 
 python -m scripts.run_experiment \
   --workload benchmark/workloads/noisy_neighbor.yaml \
@@ -549,7 +549,7 @@ results/runs/<experiment_id>/
 终端运行以下采样。采样覆盖 120 秒发压以及排队请求排空所需的额外时间：
 
 ```bash
-TINYINFER_EXPERIMENT_ID=fcfs-noisy-neighbor-seed20260912-r1
+TINYINFER_EXPERIMENT_ID=fcfs-noisy-neighbor-seed20260912-r3
 
 for TINYINFER_SAMPLE_INDEX in $(seq 1 180); do
   date +%s%3N
@@ -656,13 +656,187 @@ Day 1 通过后再进入 VTC 开发。后续 FCFS 与 VTC 必须复用同一 wor
 
 ### 5.3 Day 2：VTC 调度
 
-- 实现每租户 virtual counter、租户 FIFO、counter lift 和确定性 tie-break；
-- admission 按输入 token 计费，decode 按实际输出 token 增量计费；
-- 为计费、租户选择、重新活跃、取消和异常路径增加单元测试；
-- 使用完全相同的 workload 对比 FCFS 与 VTC；
-- 检查死锁、丢请求、counter 回退、吞吐异常和 scheduler CPU 开销。
+Day 2 的目标是在固定的 vLLM `v0.29.0` 上完成原始 VTC，并复用 Day 1 的模型、负载、
+分析链路和服务参数做公平对照。实现必须保持 work-conserving：只要有可运行请求和资源，
+不能因为公平排序让 GPU 空转。
 
-验收：饱和负载下高频租户不能长期挤压持续活跃的低频租户。
+#### 5.3.1 开发计划与变更边界
+
+按以下顺序执行：
+
+1. 在 `tinyinfer/scheduler/vtc.py` 实现无 vLLM 依赖的状态核心；
+2. 在 `tinyinfer/scheduler/vllm_adapter.py` 实现 vLLM `scheduler_cls` 最小适配；
+3. 先跑 counter、lift、FIFO 和确定性测试，再做固定版本接口检查；
+4. 在 GPU 主机启动 VTC，完成单请求和双租户 smoke test；
+5. 使用 Day 1 同一 workload 连续跑 3 次 VTC；
+6. 对照 FCFS/VTC 的完整性、公平性、吞吐和日志，判定退出条件。
+
+核心规则固定如下：
+
+- 每租户维护一个只增不减的 virtual counter；
+- 新请求从 waiting queue 被接纳运行时按 `input_tokens × wp` 计费一次；仍在等待即取消的
+  请求不计费，已接纳后取消的请求不退款；
+- 模型实际接受输出后，按新增的 `output_tokens × wq` 计费，不按 `max_tokens` 预估；
+- 每次从 waiting queue 选择 counter 最小租户的队首请求；
+- 同一租户严格按进入 scheduler 的顺序 FIFO；跨租户 counter 相同则按全局到达序号、
+  `request_id` 确定性排序；
+- 租户从无 outstanding request 变为重新活跃时，将旧 counter 提升到当前活跃租户最小
+  counter，再收取本次输入成本，防止积累无限历史额度；
+- 默认 `wp=1`、`wq=2`，通过 `TINYINFER_VTC_WP`、`TINYINFER_VTC_WQ` 暴露为实验参数。
+
+Day 2 不启用 structured output、远端 KV connector、LoRA、speculative decoding 或 async
+scheduling。适配器对后四项不支持配置直接启动失败，不能静默降级到 FCFS。若后续确认
+`scheduler_cls` 无法覆盖固定版本的必要路径，才允许生成 `patches/vllm-0.29.0-vtc.patch`；
+禁止复制整份上游 Scheduler。
+
+#### 5.3.2 本地单元测试和固定版本检查
+
+```bash
+cd /Users/yyu03/project/dev/vtc-infer
+python3 -m venv .venv
+. .venv/bin/activate
+python -m pip install -e '.[dev]'
+pytest -q
+python -m compileall -q tinyinfer tests
+```
+
+测试至少覆盖：默认与自定义 `wp/wq` 计费、最小 counter 选择、租户 FIFO、counter lift、
+counter 单调性、相同 counter 的确定性排序、重复请求及非法参数。固定版本检查必须确认：
+
+- `vllm.v1.core.sched.scheduler.Scheduler` 仍有 `add_request`、`schedule`、
+  `update_from_output` 和 `finish_requests`；
+- `Request.sampling_params.extra_args` 能读取 `tenant_id`；
+- `SchedulerOutput.num_scheduled_tokens` 与 `EngineCoreOutputs.outputs[].new_token_ids`
+  的语义未变化；
+- `--scheduler-cls tinyinfer.scheduler.vllm_adapter.VTCScheduler` 能加载成功。
+
+任一接口变化都先停止 GPU 实验并更新适配器；不能通过捕获异常回退 FCFS。
+
+#### 5.3.3 同步代码并启动 VTC 服务
+
+正式 GPU 验收只使用已提交 commit。先在 GPU 主机执行：
+
+```bash
+cd /workspace/vtc-infer
+git pull --ff-only
+git status --short
+git rev-parse HEAD
+. .venv/bin/activate
+pytest -q
+```
+
+停止 FCFS 容器，使用同一镜像、模型 revision、缓存、端口及资源参数启动 VTC。这里把仓库
+只读挂载并加入 `PYTHONPATH`，避免在容器内复制或手改 vLLM：
+
+```bash
+sudo docker stop tinyinfer-vllm-fcfs 2>/dev/null || true
+sudo docker rm tinyinfer-vllm-fcfs 2>/dev/null || true
+
+sudo docker run -d \
+  --name tinyinfer-vllm-vtc \
+  --gpus all \
+  --ipc=host \
+  -p 8000:8000 \
+  -e PYTHONPATH=/workspace/vtc-infer \
+  -e TINYINFER_VTC_WP=1 \
+  -e TINYINFER_VTC_WQ=2 \
+  -v /workspace/vtc-infer:/workspace/vtc-infer:ro \
+  -v /data/tinyinfer/huggingface:/root/.cache/huggingface \
+  -v /data/tinyinfer/vllm-cache:/root/.cache/vllm \
+  vllm/vllm-openai:v0.29.0 \
+  Qwen/Qwen2.5-1.5B-Instruct \
+  --revision 989aa7980e4cf806f80c7fef2b1adb7bc71aa306 \
+  --max-model-len 4096 \
+  --max-num-seqs 16 \
+  --enable-prefix-caching \
+  --scheduler-cls tinyinfer.scheduler.vllm_adapter.VTCScheduler
+```
+
+`--async-scheduling` 默认不传，即保持关闭。若为制造持续排队必须把 `max_num_seqs` 降到
+8，则 FCFS 三次基线和 VTC 三次实验都要用 8 重跑，不能拿 Day 1 的 16 与 VTC 的 8
+直接比较。控制请求长度，出现 KV OOM 或频繁 preemption 时先降低输出长度或发压强度。
+
+#### 5.3.4 VTC smoke test
+
+```bash
+sudo docker logs -f tinyinfer-vllm-vtc
+curl --fail --silent http://127.0.0.1:8000/health
+curl --fail --silent http://127.0.0.1:8000/v1/models | jq
+
+curl --fail --no-buffer http://127.0.0.1:8000/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "Qwen/Qwen2.5-1.5B-Instruct",
+    "messages": [{"role": "user", "content": "Reply with exactly: VTC ready"}],
+    "temperature": 0,
+    "max_tokens": 16,
+    "stream": true,
+    "stream_options": {"include_usage": true},
+    "vllm_xargs": {"tenant_id": "smoke-tenant"}
+  }'
+```
+
+随后发送两个不同 `tenant_id` 的并发短请求。验收要求：请求都有 `[DONE]` 和 usage；缺失
+`tenant_id` 的请求明确失败；日志没有 import error、deadlock、OOM、worker crash 或偷偷
+切回默认 Scheduler。通过 `docker inspect` 保存环境变量和启动参数。
+
+#### 5.3.5 运行三次 VTC 对照实验
+
+每次运行前等待 waiting queue 回到 0，实验编号依次使用 `r1`、`r2`、`r3`：
+
+```bash
+TINYINFER_EXPERIMENT_ID=vtc-noisy-neighbor-seed20260912-r1
+
+python -m scripts.run_experiment \
+  --workload benchmark/workloads/noisy_neighbor.yaml \
+  --policy vtc \
+  --experiment-id "$TINYINFER_EXPERIMENT_ID" \
+  --service-parameter max_model_len=4096 \
+  --service-parameter max_num_seqs=16 \
+  --service-parameter prefix_caching=true \
+  --service-parameter async_scheduling=false \
+  --service-parameter wp=1 \
+  --service-parameter wq=2 \
+  --service-parameter vllm_version=0.29.0 \
+  --service-parameter vllm_image_digest=sha256:c2914767605584b6d8f45686b82de173ecc99e781897aa3d0a66dacd72c51ae1 \
+  --service-parameter model_revision=989aa7980e4cf806f80c7fef2b1adb7bc71aa306
+```
+
+另一个终端完全复用 5.2.5 的 waiting queue 采样，只把实验编号改为 VTC。实验结束后执行
+5.2.6～5.2.7 的分析与数据完整性检查，并保存：
+
+```bash
+sudo docker logs tinyinfer-vllm-vtc \
+  > "results/runs/${TINYINFER_EXPERIMENT_ID}/server.log" 2>&1
+sudo docker inspect tinyinfer-vllm-vtc \
+  > "results/runs/${TINYINFER_EXPERIMENT_ID}/container-inspect.json"
+```
+
+#### 5.3.6 FCFS/VTC 验收与当天退出条件
+
+只比较同一 commit、模型、revision、镜像 digest、workload、seed、`max_num_seqs`、prefix
+caching 和 async 设置的运行。三次重复均需满足：
+
+- 单元测试全部通过；
+- `failed_requests == 0`，请求数、request ID 和计划到达时间与 FCFS 对应重复一致；
+- VTC 请求全部排空，无死锁、丢请求、counter 回退、OOM 或持续抢占；
+- waiting queue 达到与 FCFS 相同的饱和门槛；
+- 高频租户不能长期挤压持续活跃的低频租户；以 `tenant-b` P95/P99 TTFT、最长连续等待
+  区间和完成时间线共同判断，不能只看 Jain index；
+- aggregate throughput 无无法解释的异常下降；若下降，先核对 scheduler CPU、日志和
+  preemption，再记录公平性与吞吐的权衡；
+- FCFS/VTC 的唯一策略差异是 `scheduler_cls` 与明确记录的 `wp/wq`。
+
+#### 5.3.7 2026-09-13 执行记录
+
+- 已实现 `VTCState`：租户 counter、counter lift、输入/实际输出计费、租户 FIFO 和确定性
+  tie-break；默认 `wp=1`、`wq=2`；
+- 已实现 vLLM `v0.29.0` 最小 `scheduler_cls` 适配器，并对 Day 2 禁用能力 fail-fast；
+- 本地 `pytest -q`：`19 passed`；`compileall` 通过；
+- 已对 tag `v0.29.0`（commit `98dff2a81d747d1dba01a47f939f48c3526d4206`）检查上述接口；
+- GPU 集成和三次 FCFS/VTC 对照尚未执行：`ssh ubuntu@106.75.68.80` 返回
+  `Permission denied (publickey,password)`。获得有效 SSH 凭据后从 5.3.3 继续；在此之前
+  Day 2 不能标记完成。
 
 ### 5.4 Day 3：缓存实验与交付
 
